@@ -50,6 +50,16 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
+      - name: Import Existing Resource Group
+        run: |
+          cd infrastructure
+          terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group may already be imported or doesn't exist"
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
       - name: Terraform Validate
         run: |
           cd infrastructure
