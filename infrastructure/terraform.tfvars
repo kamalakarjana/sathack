@@ -1,0 +1,10 @@
+environment         = "dev"
+resource_group_name = "kamalakar-demo-dev"
+location            = "Central US"
+acr_name            = "acrkamaldemodev"
+aks_cluster_name    = "kamal-lgb-aks-cluster"
+vnet_name           = "kamal-vnet-dev-lbg-app"
+public_ip_name      = "kamal-lbg-dev-lbg-app"
+node_count          = 2
+vm_size             = "Standard_D2s_v3"
+kubernetes_version  = "1.33.3"

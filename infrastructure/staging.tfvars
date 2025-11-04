@@ -1,0 +1,10 @@
+environment         = "staging"
+resource_group_name = "kamalakar-demo-dev"
+location            = "Central US"
+acr_name            = "acrkamaldemodev"
+aks_cluster_name    = "kamal-lgb-aks-cluster"
+vnet_name           = "vnet-staging-lbg-app"
+public_ip_name      = "pip-lb-staging-lbg-app"
+node_count          = 3
+vm_size             = "Standard_D2s_v3"
+kubernetes_version  = "1.33.3"
