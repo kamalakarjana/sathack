@@ -67,9 +67,9 @@ module "aks" {
   subnet_id           = module.network.aks_subnet_id
   acr_id              = module.acr.id
   environment         = var.environment
+  kubernetes_version  = var.kubernetes_version
   node_count          = var.node_count
   vm_size             = var.vm_size
-  kubernetes_version  = var.kubernetes_version
   min_count           = var.min_count
   max_count           = var.max_count
 }
