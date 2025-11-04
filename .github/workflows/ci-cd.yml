@@ -36,21 +36,6 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get Current AKS Version or Latest Available
-        id: get_aks_version
-        run: |
-          # Check if AKS cluster exists
-          if az aks show --name lbg-aks-cluster-dev --resource-group kamalakar-demo-dev --query kubernetesVersion -o tsv 2>/dev/null; then
-            CURRENT_VERSION=$(az aks show --name lbg-aks-cluster-dev --resource-group kamalakar-demo-dev --query kubernetesVersion -o tsv)
-            echo "Existing AKS cluster found. Current version: $CURRENT_VERSION"
-            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          else
-            # Get the latest available AKS version for the region
-            LATEST_VERSION=$(az aks get-versions --location "Central US" --query "orchestrators[-1].orchestratorVersion" -o tsv)
-            echo "No existing AKS cluster found. Using latest available version: $LATEST_VERSION"
-            echo "current_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-          fi
-
       - name: Terraform Init
         run: |
           cd infrastructure
@@ -88,11 +73,11 @@ jobs:
             -var="resource_group_name=kamalakar-demo-dev" \
             -var="location=Central US" \
             -var="acr_name=acrkamaldemodev" \
-            -var="aks_cluster_name=lbg-aks-cluster-dev" \
+            -var="aks_cluster_name=lbg-aks-cluster" \
             -var="vnet_name=kamal-vnet-dev-lbg-app" \
             -var="public_ip_name=pip-lb-dev-lbg-app" \
             -var="vm_size=Standard_D2s_v3" \
-            -var="kubernetes_version=${{ steps.get_aks_version.outputs.current_version }}" \
+            -var="kubernetes_version=1.33.3" \
             -var="min_count=1" \
             -var="max_count=5" \
             -out=tfplan
