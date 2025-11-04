@@ -31,38 +31,38 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Get Current AKS Version
+      - name: Get Current AKS Version or Latest Available
         id: get_aks_version
         run: |
-          CURRENT_VERSION=$(az aks show --name lbg-aks-cluster-dev --resource-group kamalakar-demo-dev --query kubernetesVersion -o tsv)
-          echo "Current AKS version: $CURRENT_VERSION"
-          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          # Check if AKS cluster exists
+          if az aks show --name lbg-aks-cluster-dev --resource-group kamalakar-demo-dev --query kubernetesVersion -o tsv 2>/dev/null; then
+            CURRENT_VERSION=$(az aks show --name lbg-aks-cluster-dev --resource-group kamalakar-demo-dev --query kubernetesVersion -o tsv)
+            echo "Existing AKS cluster found. Current version: $CURRENT_VERSION"
+            echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          else
+            # Get the latest available AKS version for the region
+            LATEST_VERSION=$(az aks get-versions --location "Central US" --query "orchestrators[-1].orchestratorVersion" -o tsv)
+            echo "No existing AKS cluster found. Using latest available version: $LATEST_VERSION"
+            echo "current_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          fi
 
       - name: Terraform Init
         run: |
           cd infrastructure
           terraform init \
             -backend-config="resource_group_name=kamalakar-demo-dev" \
-            -backend-config="storage_account_name=tfstatestorageacckamalj2k0212" \
+            -backend-config="storage_account_name=${{ secrets.STORAGE_ACCOUNT_NAME }}" \
             -backend-config="container_name=lbg-02-12-1994" \
             -backend-config="key=terraform.lbg-02-12-1994"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
       - name: Terraform Validate
         run: |
           cd infrastructure
           terraform validate
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
       - name: Terraform Format
         run: |
@@ -77,19 +77,14 @@ jobs:
             -var="resource_group_name=kamalakar-demo-dev" \
             -var="location=Central US" \
             -var="acr_name=acrkamaldemodev" \
-            -var="aks_cluster_name=lbg-aks-cluster" \
+            -var="aks_cluster_name=lbg-aks-cluster-dev" \
             -var="vnet_name=kamal-vnet-dev-lbg-app" \
             -var="public_ip_name=pip-lb-dev-lbg-app" \
             -var="vm_size=Standard_D2s_v3" \
-            -var="kubernetes_version=${{ steps.get_aks_version.outputs.current_version || '1.33.3' }}" \
+            -var="kubernetes_version=${{ steps.get_aks_version.outputs.current_version }}" \
             -var="min_count=1" \
             -var="max_count=5" \
             -out=tfplan
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
@@ -98,11 +93,6 @@ jobs:
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
           terraform apply -auto-approve tfplan
           echo "Terraform apply completed successfully"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -208,7 +198,9 @@ jobs:
       - name: Configure Azure credentials
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get AKS credentials
         run: |
@@ -222,7 +214,6 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
-      # NEW STEP: Install Nginx Ingress Controller for Browser Access
       - name: Install Nginx Ingress Controller
         run: |
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -315,7 +306,6 @@ jobs:
           echo ""
           kubectl get pvc -n lbg-ns 2>/dev/null || echo "No PVCs found"
 
-      # NEW STEP: Get Browser Access Information
       - name: Get Browser Access URLs
         run: |
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
