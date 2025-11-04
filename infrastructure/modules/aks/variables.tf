@@ -11,7 +11,7 @@ variable "location" {
 variable "aks_cluster_name" {
   description = "The name of the AKS cluster"
   type        = string
-  default     = "kamal-lgb-aks-cluster"
+  default     = "lbg-aks-cluster"
 }
 
 variable "vnet_id" {

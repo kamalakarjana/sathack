@@ -4,12 +4,6 @@ variable "resource_group_name" {
   default     = "kamalakar-demo-dev"
 }
 
-variable "azurerm_kubernetes_cluster" {
-  description = "The name of the resource group"
-  type        = string
-  default     = "kamal-lgb-aks-cluster"
-}
-
 variable "location" {
   description = "The Azure region to deploy to"
   type        = string
@@ -34,7 +28,7 @@ variable "acr_name" {
 variable "aks_cluster_name" {
   description = "The name of the AKS cluster"
   type        = string
-  default     = "kamal-lgb-aks-cluster"
+  default     = "lbg-aks-cluster"
 }
 
 variable "vnet_name" {
@@ -46,7 +40,7 @@ variable "vnet_name" {
 variable "public_ip_name" {
   description = "The name of the public IP address for the load balancer"
   type        = string
-  default     = "kamal-lbg-dev-lbg-app"
+  default     = "pip-lb-dev-lbg-app"
 }
 
 variable "node_count" {

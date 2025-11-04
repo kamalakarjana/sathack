@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.0"
   backend "azurerm" {
     resource_group_name  = "kamalakar-demo-dev"
-    storage_account_name = "tfstatestorageacckamalj2k0212"
+    storage_account_name = "tfstatelkamalj2k0212"
     container_name       = "lbg-02-12-1994"
     key                  = "terraform.lbg-02-12-1994"
   }
@@ -70,6 +70,8 @@ module "aks" {
   node_count          = var.node_count
   vm_size             = var.vm_size
   kubernetes_version  = var.kubernetes_version
+  min_count           = var.min_count
+  max_count           = var.max_count
 }
 
 # Public IP for Load Balancer
