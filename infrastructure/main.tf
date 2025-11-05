@@ -24,9 +24,12 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
 }
-
 # Resource Group
 module "resource_group" {
   source = "./modules/resource-group"
