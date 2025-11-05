@@ -12,7 +12,8 @@ patientService:
   image: patient-service
   tag: latest
   port: 3000
-  serviceType: ClusterIP
+  serviceType: LoadBalancer
+  servicePort: 80
   resources:
     requests:
       memory: "128Mi"
@@ -32,7 +33,8 @@ appointmentService:
   image: appointment-service
   tag: latest
   port: 3001
-  serviceType: ClusterIP
+  serviceType: LoadBalancer
+  servicePort: 80
   resources:
     requests:
       memory: "128Mi"
@@ -46,8 +48,6 @@ appointmentService:
     targetCPU: 50
     targetMemory: 70
 
+# Disable ingress since we're using LoadBalancer
 ingress:
-  enabled: true
-  name: lbg-app-ingress
-  className: "nginx"
-  host: "lbg-app.dev.local"
+  enabled: false

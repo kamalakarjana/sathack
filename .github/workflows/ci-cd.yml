@@ -203,26 +203,6 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
-      - name: Install Nginx Ingress Controller
-        run: |
-          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-          helm repo update
-          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx \
-            --create-namespace \
-            --set controller.service.type=LoadBalancer \
-            --set controller.ingressClassResource.name=nginx \
-            --wait \
-            --timeout 5m
-
-      - name: Wait for LoadBalancer IP
-        run: |
-          echo "Waiting for LoadBalancer IP assignment..."
-          timeout 300s bash -c 'until kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 5; done'
-          EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "External IP: $EXTERNAL_IP"
-          echo "external_ip=$EXTERNAL_IP" >> $GITHUB_ENV
-
       - name: Complete cleanup of existing resources
         run: |
           echo "=== Performing complete cleanup ==="
@@ -262,28 +242,36 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Install Helm chart
+      - name: Install Helm chart with LoadBalancer
         run: |
           cd kubernetes/helm
           
-          # Install the Helm chart
+          # Install the Helm chart with LoadBalancer configuration
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
             --create-namespace \
             --values values-dev.yml \
             --set patientService.image=${{ secrets.ACR_LOGIN_SERVER }}/patient-service:${{ github.sha }} \
             --set appointmentService.image=${{ secrets.ACR_LOGIN_SERVER }}/appointment-service:${{ github.sha }} \
+            --set patientService.serviceType=LoadBalancer \
+            --set appointmentService.serviceType=LoadBalancer \
             --wait \
             --timeout 10m
           
-          echo "Helm chart deployed successfully"
+          echo "Helm chart deployed successfully with LoadBalancer services"
 
-      - name: Wait for deployments
+      - name: Wait for deployments and LoadBalancers
         run: |
           echo "=== Waiting for deployments to be ready ==="
           kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=300s
-          echo "=== All deployments are ready ==="
+          
+          echo "=== Waiting for LoadBalancer IPs ==="
+          # Wait for LoadBalancer IP assignment
+          timeout 300s bash -c 'until kubectl get svc patient-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 10; echo "Waiting for patient-service LoadBalancer IP..."; done'
+          timeout 300s bash -c 'until kubectl get svc appointment-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 10; echo "Waiting for appointment-service LoadBalancer IP..."; done'
+          
+          echo "=== All deployments and LoadBalancers are ready ==="
 
       - name: Verify deployment
         run: |
@@ -296,15 +284,12 @@ jobs:
           echo "=== Services ==="
           kubectl get svc -n lbg-ns
           echo ""
-          echo "=== Ingress ==="
-          kubectl get ingress -n lbg-ns
-          echo ""
           echo "=== HPA ==="
           kubectl get hpa -n lbg-ns
 
-      - name: Run comprehensive health checks
+      - name: Run LoadBalancer health checks
         run: |
-          echo "=== Running Comprehensive Health Checks ==="
+          echo "=== Running LoadBalancer Health Checks ==="
           sleep 30
           
           # Wait for pods to be ready
@@ -315,82 +300,74 @@ jobs:
           echo "=== Pod Status ==="
           kubectl get pods -n lbg-ns -o wide
           
-          echo "=== Testing via Port-Forward (Direct Service Access) ==="
-          # Test patient service directly
-          echo "Testing Patient Service:"
-          kubectl port-forward -n lbg-ns service/patient-service 8080:3000 > /dev/null 2>&1 &
-          PATIENT_PID=$!
-          sleep 5
-          if curl -s -f http://localhost:8080/health; then
-            echo "✅ Patient service direct access: HEALTHY"
-          else
-            echo "❌ Patient service direct access: UNHEALTHY"
-          fi
-          kill $PATIENT_PID 2>/dev/null
+          echo "=== Testing via LoadBalancer ==="
+          # Get LoadBalancer IPs
+          PATIENT_IP=$(kubectl get svc patient-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          APPOINTMENT_IP=$(kubectl get svc appointment-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           
-          # Test appointment service directly
-          echo "Testing Appointment Service:"
-          kubectl port-forward -n lbg-ns service/appointment-service 8081:3001 > /dev/null 2>&1 &
-          APPOINTMENT_PID=$!
-          sleep 5
-          if curl -s -f http://localhost:8081/health; then
-            echo "✅ Appointment service direct access: HEALTHY"
-          else
-            echo "❌ Appointment service direct access: UNHEALTHY"
-          fi
-          kill $APPOINTMENT_PID 2>/dev/null
+          echo "Patient Service LoadBalancer IP: $PATIENT_IP"
+          echo "Appointment Service LoadBalancer IP: $APPOINTMENT_IP"
           
-          echo "=== Testing via Ingress ==="
-          EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          if [ -n "$EXTERNAL_IP" ]; then
-            echo "Testing with External IP: $EXTERNAL_IP"
-            
-            # Test with retry logic and timeout
-            echo "Testing /health endpoint (with retry):"
+          if [ -n "$PATIENT_IP" ]; then
+            echo "Testing Patient Service LoadBalancer:"
             for i in {1..5}; do
-              STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health || echo "timeout")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$PATIENT_IP/health || echo "failed")
               if [ "$STATUS" = "200" ]; then
-                echo "✅ Ingress /health: SUCCESS (HTTP $STATUS)"
+                echo "✅ Patient Service LoadBalancer: HEALTHY (HTTP $STATUS)"
                 break
               else
-                echo "❌ Ingress /health: FAILED (HTTP $STATUS) - attempt $i"
+                echo "❌ Patient Service LoadBalancer: UNHEALTHY (HTTP $STATUS) - attempt $i"
                 sleep 10
               fi
             done
             
-            echo "Testing /patients endpoint:"
-            STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients || echo "timeout")
-            echo "HTTP Status: $STATUS"
-            
-            echo "Testing /appointments endpoint:"
-            STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments || echo "timeout")
-            echo "HTTP Status: $STATUS"
-            
+            echo "Testing Patient Service endpoints:"
+            curl -s http://$PATIENT_IP/patients | head -c 100
+            echo ""
           else
-            echo "❌ No External IP found for ingress"
+            echo "❌ No LoadBalancer IP found for patient-service"
+          fi
+          
+          if [ -n "$APPOINTMENT_IP" ]; then
+            echo "Testing Appointment Service LoadBalancer:"
+            for i in {1..5}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$APPOINTMENT_IP/health || echo "failed")
+              if [ "$STATUS" = "200" ]; then
+                echo "✅ Appointment Service LoadBalancer: HEALTHY (HTTP $STATUS)"
+                break
+              else
+                echo "❌ Appointment Service LoadBalancer: UNHEALTHY (HTTP $STATUS) - attempt $i"
+                sleep 10
+              fi
+            done
+            
+            echo "Testing Appointment Service endpoints:"
+            curl -s http://$APPOINTMENT_IP/appointments | head -c 100
+            echo ""
+          else
+            echo "❌ No LoadBalancer IP found for appointment-service"
           fi
           
           echo "=== Final Deployment Status ==="
           kubectl get all -n lbg-ns
-          echo ""
-          kubectl describe ingress -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
-          EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          PATIENT_IP=$(kubectl get svc patient-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          APPOINTMENT_IP=$(kubectl get svc appointment-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          
           echo "🎉 DEPLOYMENT SUCCESSFUL!"
           echo ""
-          echo "📱 BROWSER ACCESS INFORMATION:"
-          echo "================================"
-          echo "External IP: $EXTERNAL_IP"
+          echo "📱 LOADBALANCER ACCESS INFORMATION:"
+          echo "==================================="
+          echo "Patient Service LoadBalancer IP: $PATIENT_IP"
+          echo "Appointment Service LoadBalancer IP: $APPOINTMENT_IP"
           echo ""
-          echo "📍 Add this to your /etc/hosts file:"
-          echo "$EXTERNAL_IP lbg-app.dev.local"
-          echo ""
-          echo "🌐 Access your services in browser:"
-          echo "   Health Check:       http://lbg-app.dev.local/health"
-          echo "   Patient Service:    http://lbg-app.dev.local/patients"
-          echo "   Appointment Service: http://lbg-app.dev.local/appointments"
+          echo "🌐 Access your services directly:"
+          echo "   Patient Service Health:    http://$PATIENT_IP/health"
+          echo "   Patient Service API:       http://$PATIENT_IP/patients"
+          echo "   Appointment Service Health: http://$APPOINTMENT_IP/health"
+          echo "   Appointment Service API:    http://$APPOINTMENT_IP/appointments"
 
   cleanup:
     runs-on: ubuntu-latest

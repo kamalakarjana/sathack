@@ -9,7 +9,7 @@ spec:
   selector:
     app: patient-service
   ports:
-  - port: 3000
-    targetPort: 3000
-    protocol: TCP
-  type: ClusterIP
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+  type: LoadBalancer

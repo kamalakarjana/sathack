@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: patient-service
+  namespace: lbg-ns
+  labels:
+    app: patient-service
+spec:
+  selector:
+    app: patient-service
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: appointment-service
+  namespace: lbg-ns
+  labels:
+    app: appointment-service
+spec:
+  selector:
+    app: appointment-service
+  ports:
+    - port: 3001
+      targetPort: 3001
+  type: ClusterIP

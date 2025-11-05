@@ -1,15 +1,17 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: appointment-service
-  namespace: lbg-ns
+  name: {{ .Values.appointmentService.name }}
+  namespace: {{ .Values.global.namespace }}
   labels:
-    app: appointment-service
+    app: {{ .Values.appointmentService.name }}
+    environment: {{ .Values.global.environment }}
 spec:
   selector:
-    app: appointment-service
+    app: {{ .Values.appointmentService.name }}
   ports:
-  - port: 3001
-    targetPort: 3001
-    protocol: TCP
-  type: ClusterIP
+    - port: {{ .Values.appointmentService.servicePort }}
+      targetPort: {{ .Values.appointmentService.port }}
+      protocol: TCP
+      name: http
+  type: {{ .Values.appointmentService.serviceType }}
