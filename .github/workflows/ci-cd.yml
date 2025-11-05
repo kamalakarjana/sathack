@@ -190,7 +190,7 @@ jobs:
           ./get_helm.sh --version v${{ env.HELM_VERSION }}
           helm version
 
-      - name: Configure Azure credentials with Service Principal
+      - name: Configure Azure credentials
         run: |
           az login --service-principal \
             -u ${{ secrets.AZURE_CLIENT_ID }} \
@@ -219,7 +219,6 @@ jobs:
             --create-namespace \
             --set controller.service.type=LoadBalancer \
             --set controller.ingressClassResource.name=nginx \
-            --set controller.ingressClassResource.controllerValue="k8s.io/ingress-nginx" \
             --wait \
             --timeout 5m
 
@@ -231,23 +230,36 @@ jobs:
           echo "External IP: $EXTERNAL_IP"
           echo "external_ip=$EXTERNAL_IP" >> $GITHUB_ENV
 
-      - name: Clean up existing resources
+      - name: Complete cleanup of existing resources
         run: |
-          echo "Cleaning up any existing resources..."
-          # Delete namespace if exists
-          kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s
-          sleep 10
+          echo "=== Performing complete cleanup ==="
           
-          # Delete any orphaned Helm release
-          helm uninstall lbg-app -n lbg-ns --ignore-not-found=true
+          # Delete any existing Helm release
+          helm uninstall lbg-app -n lbg-ns --ignore-not-found=true || true
+          helm uninstall lbg-app -n default --ignore-not-found=true || true
+          
+          # Delete namespace with force if needed
+          kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s || true
+          
+          # Wait and ensure namespace is gone
+          sleep 20
+          
+          # If namespace still exists, remove finalizers
+          if kubectl get namespace lbg-ns &> /dev/null; then
+            echo "Forcing namespace deletion..."
+            kubectl patch namespace lbg-ns -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+            kubectl delete namespace lbg-ns --force --grace-period=0 || true
+            sleep 15
+          fi
+          
+          echo "Cleanup completed"
 
-      - name: Create namespace
+      - name: Create fresh namespace
         run: |
-          echo "Creating namespace lbg-ns..."
+          echo "Creating fresh namespace..."
           kubectl create namespace lbg-ns
-          echo "Waiting for namespace to be active..."
           kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/lbg-ns --timeout=60s
-          echo "Namespace lbg-ns is ready"
+          echo "Namespace lbg-ns created successfully"
 
       - name: Create ACR pull secret
         run: |
@@ -258,7 +270,7 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy to AKS using Helm (Optimized for Size)
+      - name: Deploy using simplified Helm approach
         run: |
           cd kubernetes/helm
           
@@ -271,53 +283,35 @@ jobs:
             VALUES_FILE=""
           fi
           
-          echo "=== Checking Helm template size ==="
-          TEMPLATE_SIZE=$(helm template lbg-app . \
-            --namespace lbg-ns \
-            $VALUES_FILE \
-            --set patientService.tag=${{ github.sha }} \
-            --set appointmentService.tag=${{ github.sha }} \
-            --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
-            --set image.pullSecrets[0].name=acr-secret | wc -c)
-          echo "Template size: $TEMPLATE_SIZE bytes"
-          
-          if [ $TEMPLATE_SIZE -gt 3000000 ]; then
-            echo "WARNING: Template size exceeds 3MB, may cause issues"
-          fi
-          
-          echo "=== Helm Deployment ==="
-          # Use --timeout but not --wait initially to avoid size issues
+          echo "=== Step 1: Install without --atomic flag ==="
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
-            --create-namespace \
-            --timeout 15m \
             $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
             --set image.pullSecrets[0].name=acr-secret \
-            --atomic
+            --timeout 10m
           
-          echo "=== Waiting for deployment to be ready ==="
-          # Wait for resources separately to avoid large payloads
+          echo "=== Step 2: Wait for deployments separately ==="
           kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=300s
           
-          echo "=== Helm Deployment Completed ==="
+          echo "=== Helm deployment completed successfully ==="
 
       - name: Verify deployment
         run: |
           echo "=== Deployment Verification ==="
           kubectl get all -n lbg-ns
           echo ""
-          echo "=== Ingress ==="
-          kubectl get ingress -n lbg-ns
-          echo ""
-          echo "=== HPA ==="
-          kubectl get hpa -n lbg-ns
-          echo ""
           echo "=== Pods Status ==="
           kubectl get pods -n lbg-ns -o wide
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n lbg-ns
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
