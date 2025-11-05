@@ -36,11 +36,6 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check Available VM Sizes in East US
-        run: |
-          echo "Checking available VM sizes in East US:"
-          az vm list-sizes --location "East US" --query "[?contains(name, 'dc2')] | [:5].{Name:name, CPUs:numberOfCores, Memory:memoryInMb}" --output table
-
       - name: Create Resource Group if not exists
         run: |
           if ! az group show --name kamalakar-demo-dev &>/dev/null; then
@@ -77,22 +72,6 @@ jobs:
           else
             echo "Storage account already exists"
           fi
-
-      - name: Grant Required Permissions to Service Principal
-        run: |
-          # Get the service principal object ID
-          SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
-          echo "Service Principal Object ID: $SP_OBJECT_ID"
-          
-          # Grant User Access Administrator role at subscription level for role assignments
-          az role assignment create \
-            --assignee $SP_OBJECT_ID \
-            --role "User Access Administrator" \
-            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            || echo "Role assignment may already exist or insufficient permissions"
-          
-          echo "Waiting for permissions to propagate..."
-          sleep 30
 
       - name: Terraform Init
         run: |
@@ -156,6 +135,17 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
+      - name: Remove ACR Role Assignment from Terraform State
+        run: |
+          cd infrastructure
+          # Remove the role assignment from state to prevent Terraform from trying to create it
+          terraform state rm module.aks.azurerm_role_assignment.aks_acr 2>/dev/null || echo "Role assignment not in state or already removed"
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
       - name: Terraform Validate
         run: |
           cd infrastructure
@@ -206,20 +196,6 @@ jobs:
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Manually Assign ACR Role if Needed
-        if: always()
-        run: |
-          # Get AKS cluster service principal
-          AKS_SP_ID=$(az aks show --resource-group kamalakar-demo-dev --name kamal-lgb-aks-cluster-dev --query identity.principalId -o tsv)
-          echo "AKS Service Principal ID: $AKS_SP_ID"
-          
-          # Assign AcrPull role to AKS cluster
-          az role assignment create \
-            --assignee $AKS_SP_ID \
-            --role AcrPull \
-            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerRegistry/registries/acrkamaldemodev" \
-            || echo "ACR role assignment may already exist"
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -330,6 +306,19 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
+      - name: Create ACR pull secret
+        run: |
+          # Create namespace if not exists
+          kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create ACR pull secret
+          kubectl create secret docker-registry acr-secret \
+            --namespace lbg-ns \
+            --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
+            --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
+            --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Install Nginx Ingress Controller
         run: |
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -371,33 +360,38 @@ jobs:
             echo "Namespace lbg-ns does not exist, it will be created"
           fi
 
-      - name: Create ACR pull secret
-        run: |
-          kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret docker-registry acr-secret \
-            --namespace lbg-ns \
-            --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
-            --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
-            --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Deploy to AKS using Helm
         run: |
           cd kubernetes/helm
+          
+          # Check if values-dev.yml exists, if not use command line values
+          if [ -f "values-dev.yml" ]; then
+            echo "Using values-dev.yml file"
+            VALUES_FILE="-f values-dev.yml"
+          else
+            echo "values-dev.yml not found, using command line values"
+            VALUES_FILE=""
+          fi
+          
+          # Template test first
           helm template lbg-app . \
             --namespace lbg-ns \
-            -f values-dev.yml \
+            $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
-            --set image.registry=${{ secrets.ACR_LOGIN_SERVER }}
+            --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
+            --set image.pullSecrets[0]=acr-secret
+          
+          # Install/Upgrade the release
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
             --wait \
             --timeout 15m \
-            -f values-dev.yml \
+            $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
+            --set image.pullSecrets[0]=acr-secret \
             --atomic
 
       - name: Verify deployment
