@@ -36,43 +36,6 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Create Resource Group if not exists
-        run: |
-          if ! az group show --name kamalakar-demo-dev &>/dev/null; then
-            echo "Creating resource group: kamalakar-demo-dev"
-            az group create \
-              --name kamalakar-demo-dev \
-              --location "East US" \
-              --tags "Environment=dev" "Project=lbg-app"
-          else
-            echo "Resource group already exists"
-          fi
-
-      - name: Create Storage Account for Terraform Backend
-        run: |
-          # Check if storage account exists
-          if ! az storage account show --name tfstatelkamalj2k0212 --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Creating storage account: tfstatelkamalj2k0212"
-            az storage account create \
-              --name tfstatelkamalj2k0212 \
-              --resource-group kamalakar-demo-dev \
-              --location "East US" \
-              --sku Standard_LRS \
-              --kind StorageV2
-            
-            echo "Waiting for storage account to be provisioned..."
-            sleep 30
-            
-            echo "Creating blob container"
-            az storage container create \
-              --name lbg-02-12-1994 \
-              --account-name tfstatelkamalj2k0212 \
-              --auth-mode login
-            echo "Storage account and container created successfully"
-          else
-            echo "Storage account already exists"
-          fi
-
       - name: Terraform Init
         run: |
           cd infrastructure
@@ -87,64 +50,12 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Import All Existing Resources
+      - name: Remove ACR Role Assignment from Terraform Configuration
         run: |
           cd infrastructure
-          
-          # Import resource group
-          if az group show --name kamalakar-demo-dev &>/dev/null; then
-            echo "Importing resource group..."
-            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group already imported or error"
-          fi
-          
-          # Import ACR
-          if az acr show --name acrkamaldemodev --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Importing ACR..."
-            terraform import module.acr.azurerm_container_registry.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerRegistry/registries/acrkamaldemodev || echo "ACR already imported or error"
-          fi
-          
-          # Import Virtual Network
-          if az network vnet show --name kamal-vnet-dev-lbg-app --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Importing Virtual Network..."
-            terraform import module.network.azurerm_virtual_network.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/virtualNetworks/kamal-vnet-dev-lbg-app || echo "VNet already imported or error"
-          fi
-          
-          # Import Subnet
-          if az network vnet subnet show --name aks-subnet --vnet-name kamal-vnet-dev-lbg-app --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Importing AKS Subnet..."
-            terraform import module.network.azurerm_subnet.aks /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/virtualNetworks/kamal-vnet-dev-lbg-app/subnets/aks-subnet || echo "Subnet already imported or error"
-          fi
-          
-          # Import Public IP
-          if az network public-ip show --name kamal-lbg-dev-healthcare-app --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Importing Public IP..."
-            terraform import azurerm_public_ip.pip /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/publicIPAddresses/kamal-lbg-dev-healthcare-app || echo "Public IP already imported or error"
-          fi
-          
-          # Import AKS Cluster if exists
-          if az aks show --name kamal-lgb-aks-cluster-dev --resource-group kamalakar-demo-dev &>/dev/null; then
-            echo "Importing AKS Cluster..."
-            terraform import module.aks.azurerm_kubernetes_cluster.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerService/managedClusters/kamal-lgb-aks-cluster-dev || echo "AKS already imported or error"
-          fi
-          
-          echo "Refreshing Terraform state..."
-          terraform refresh
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Remove ACR Role Assignment from Terraform State
-        run: |
-          cd infrastructure
-          # Remove the role assignment from state to prevent Terraform from trying to create it
-          terraform state rm module.aks.azurerm_role_assignment.aks_acr 2>/dev/null || echo "Role assignment not in state or already removed"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          # Comment out or remove the role assignment resource from the AKS module
+          sed -i 's/resource "azurerm_role_assignment" "aks_acr"/# resource "azurerm_role_assignment" "aks_acr"/' modules/aks/main.tf
+          echo "ACR role assignment commented out in Terraform configuration"
 
       - name: Terraform Validate
         run: |
