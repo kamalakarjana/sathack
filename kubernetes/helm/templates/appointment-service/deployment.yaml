@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: appointment-service
-        image: "${IMAGE_REGISTRY:-acrkamaldemodev.azurecr.io}/appointment-service:${APPOINTMENT_TAG:-latest}"
+        image: acrkamaldemodev.azurecr.io/appointment-service:latest
         ports:
         - containerPort: 3001
         env:

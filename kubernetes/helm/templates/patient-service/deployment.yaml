@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: patient-service
-        image: "${IMAGE_REGISTRY:-acrkamaldemodev.azurecr.io}/patient-service:${PATIENT_TAG:-latest}"
+        image: acrkamaldemodev.azurecr.io/patient-service:latest
         ports:
         - containerPort: 3000
         env:

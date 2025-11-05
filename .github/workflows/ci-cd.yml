@@ -183,13 +183,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Helm
-        run: |
-          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-          chmod 700 get_helm.sh
-          ./get_helm.sh --version v${{ env.HELM_VERSION }}
-          helm version
-
       - name: Configure Azure credentials
         run: |
           az login --service-principal \
@@ -269,11 +262,6 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Install envsubst
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gettext-base
-
       - name: Deploy using kubectl apply directly
         run: |
           cd kubernetes/helm
@@ -286,13 +274,8 @@ jobs:
           kubectl apply -f templates/appointment-service/service.yaml -n lbg-ns
           
           echo "=== Deploying Deployments ==="
-          # Use envsubst to replace image tags in deployment files
-          export PATIENT_TAG=${{ github.sha }}
-          export APPOINTMENT_TAG=${{ github.sha }}
-          export IMAGE_REGISTRY=${{ secrets.ACR_LOGIN_SERVER }}
-          
-          envsubst < templates/patient-service/deployment.yaml | kubectl apply -n lbg-ns -f -
-          envsubst < templates/appointment-service/deployment.yaml | kubectl apply -n lbg-ns -f -
+          kubectl apply -f templates/patient-service/deployment.yaml -n lbg-ns
+          kubectl apply -f templates/appointment-service/deployment.yaml -n lbg-ns
           
           echo "=== Deploying HPA ==="
           kubectl apply -f templates/patient-service/hpa.yaml -n lbg-ns
