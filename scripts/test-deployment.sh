@@ -9,7 +9,8 @@ kubectl get all -n lbg-ns
 
 echo ""
 echo "2. Checking ingress details..."
-kubectl describe ingress lbg-app-ingress -n lbg-ns
+kubectl get ingress -n lbg-ns
+kubectl describe ingress lbg-app-ingress -n lbg-ns 2>/dev/null || echo "Ingress not found or has issues"
 
 echo ""
 echo "3. Testing services via port-forward..."
@@ -37,6 +38,10 @@ if [ -n "$EXTERNAL_IP" ]; then
   echo "- /health: $(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health)"
   echo "- /patients: $(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients)"
   echo "- /appointments: $(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments)"
+  
+  echo ""
+  echo "Detailed response from /health:"
+  curl -s -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health || echo "No response from ingress"
 else
   echo "❌ No external IP found"
 fi
