@@ -36,6 +36,18 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Get Available VM Sizes
+        run: |
+          echo "Checking minimal available VM sizes in East US:"
+          # Check for the smallest VM sizes that work with AKS
+          for vm_size in "Standard_B2s" "Standard_B1ms" "Standard_B1s" "Standard_A2_v2" "Standard_A1_v2"; do
+            if az vm list-sizes --location "East US" --query "[?name=='$vm_size']" --output tsv | grep -q "$vm_size"; then
+              echo "✅ $vm_size is AVAILABLE"
+            else
+              echo "❌ $vm_size is NOT available"
+            fi
+          done
+
       - name: Create Resource Group if not exists
         run: |
           if ! az group show --name kamalakar-demo-dev &>/dev/null; then
@@ -161,10 +173,10 @@ jobs:
             -var="aks_cluster_name=kamal-lgb-aks-cluster" \
             -var="vnet_name=kamal-vnet-dev-lbg-app" \
             -var="public_ip_name=kamal-lbg-dev-healthcare-app" \
-            -var="vm_size=Standard_D2s_v3" \
+            -var="vm_size=Standard_B2s" \
             -var="kubernetes_version=1.33.3" \
             -var="min_count=1" \
-            -var="max_count=5" \
+            -var="max_count=2" \
             -out=tfplan
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
