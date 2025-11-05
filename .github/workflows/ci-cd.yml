@@ -109,6 +109,12 @@ jobs:
             terraform import module.network.azurerm_virtual_network.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/virtualNetworks/kamal-vnet-dev-lbg-app || echo "VNet already imported or error"
           fi
           
+          # Import Subnet
+          if az network vnet subnet show --name aks-subnet --vnet-name kamal-vnet-dev-lbg-app --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Importing AKS Subnet..."
+            terraform import module.network.azurerm_subnet.aks /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/virtualNetworks/kamal-vnet-dev-lbg-app/subnets/aks-subnet || echo "Subnet already imported or error"
+          fi
+          
           # Import Public IP
           if az network public-ip show --name kamal-lbg-dev-healthcare-app --resource-group kamalakar-demo-dev &>/dev/null; then
             echo "Importing Public IP..."
