@@ -8,7 +8,6 @@ echo "Cleaning up existing resources..."
 
 # Delete Helm releases
 helm uninstall lbg-app -n lbg-ns --ignore-not-found=true
-helm uninstall lbg-app -n default --ignore-not-found=true
 
 # Delete namespace
 kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s

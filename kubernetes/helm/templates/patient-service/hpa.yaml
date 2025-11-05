@@ -1,28 +1,28 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ .Values.patientService.name }}-hpa
-  namespace: {{ .Values.global.namespace }}
+  name: patient-service-hpa
+  namespace: lbg-ns
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ .Values.patientService.name }}
-  minReplicas: {{ .Values.patientService.hpa.minReplicas }}
-  maxReplicas: {{ .Values.patientService.hpa.maxReplicas }}
+    name: patient-service
+  minReplicas: 2
+  maxReplicas: 10
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: {{ .Values.patientService.hpa.targetCPU }}
+        averageUtilization: 50
   - type: Resource
     resource:
       name: memory
       target:
         type: Utilization
-        averageUtilization: {{ .Values.patientService.hpa.targetMemory }}
+        averageUtilization: 70
   behavior:
     scaleDown:
       stabilizationWindowSeconds: 300

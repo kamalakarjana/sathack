@@ -236,7 +236,6 @@ jobs:
           
           # Delete any existing Helm release
           helm uninstall lbg-app -n lbg-ns --ignore-not-found=true || true
-          helm uninstall lbg-app -n default --ignore-not-found=true || true
           
           # Delete namespace with force if needed
           kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s || true
@@ -270,34 +269,46 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy using simplified Helm approach
+      - name: Install envsubst
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext-base
+
+      - name: Deploy using kubectl apply directly
         run: |
           cd kubernetes/helm
           
-          echo "=== Checking values-dev.yml ==="
-          if [ -f "values-dev.yml" ]; then
-            echo "Using values-dev.yml file"
-            VALUES_FILE="-f values-dev.yml"
-          else
-            echo "values-dev.yml not found, using command line values"
-            VALUES_FILE=""
-          fi
+          echo "=== Deploying ConfigMap ==="
+          kubectl apply -f templates/configMap.yaml -n lbg-ns
           
-          echo "=== Step 1: Install without --atomic flag ==="
-          helm upgrade --install lbg-app . \
-            --namespace lbg-ns \
-            $VALUES_FILE \
-            --set patientService.tag=${{ github.sha }} \
-            --set appointmentService.tag=${{ github.sha }} \
-            --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
-            --set image.pullSecrets[0].name=acr-secret \
-            --timeout 10m
+          echo "=== Deploying Services ==="
+          kubectl apply -f templates/patient-service/service.yaml -n lbg-ns
+          kubectl apply -f templates/appointment-service/service.yaml -n lbg-ns
           
-          echo "=== Step 2: Wait for deployments separately ==="
+          echo "=== Deploying Deployments ==="
+          # Use envsubst to replace image tags in deployment files
+          export PATIENT_TAG=${{ github.sha }}
+          export APPOINTMENT_TAG=${{ github.sha }}
+          export IMAGE_REGISTRY=${{ secrets.ACR_LOGIN_SERVER }}
+          
+          envsubst < templates/patient-service/deployment.yaml | kubectl apply -n lbg-ns -f -
+          envsubst < templates/appointment-service/deployment.yaml | kubectl apply -n lbg-ns -f -
+          
+          echo "=== Deploying HPA ==="
+          kubectl apply -f templates/patient-service/hpa.yaml -n lbg-ns
+          kubectl apply -f templates/appointment-service/hpa.yaml -n lbg-ns
+          
+          echo "=== Deploying Ingress ==="
+          kubectl apply -f templates/ingress.yaml -n lbg-ns
+          
+          echo "=== All resources deployed successfully ==="
+
+      - name: Wait for deployments
+        run: |
+          echo "=== Waiting for deployments to be ready ==="
           kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=300s
-          
-          echo "=== Helm deployment completed successfully ==="
+          echo "=== All deployments are ready ==="
 
       - name: Verify deployment
         run: |
@@ -312,6 +323,9 @@ jobs:
           echo ""
           echo "=== Ingress ==="
           kubectl get ingress -n lbg-ns
+          echo ""
+          echo "=== HPA ==="
+          kubectl get hpa -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
@@ -345,6 +359,8 @@ jobs:
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
             curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
+            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
+            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
           fi
 
   cleanup:

@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.patientService.name }}
-  namespace: {{ .Values.global.namespace }}
+  name: patient-service
+  namespace: lbg-ns
   labels:
-    app: {{ .Values.patientService.name }}
+    app: patient-service
 spec:
   selector:
-    app: {{ .Values.patientService.name }}
+    app: patient-service
   ports:
-  - port: {{ .Values.patientService.port }}
-    targetPort: {{ .Values.patientService.port }}
+  - port: 3000
+    targetPort: 3000
     protocol: TCP
-  type: {{ .Values.patientService.serviceType }}
+  type: ClusterIP

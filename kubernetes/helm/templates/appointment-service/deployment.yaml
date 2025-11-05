@@ -1,31 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.appointmentService.name }}
-  namespace: {{ .Values.global.namespace }}
+  name: appointment-service
+  namespace: lbg-ns
   labels:
-    app: {{ .Values.appointmentService.name }}
-    version: {{ .Values.appointmentService.tag }}
-    environment: {{ .Values.global.environment }}
+    app: appointment-service
+    environment: dev
 spec:
-  replicas: {{ .Values.appointmentService.replicaCount }}
+  replicas: 2
   selector:
     matchLabels:
-      app: {{ .Values.appointmentService.name }}
+      app: appointment-service
   template:
     metadata:
       labels:
-        app: {{ .Values.appointmentService.name }}
-        version: {{ .Values.appointmentService.tag }}
+        app: appointment-service
     spec:
       containers:
-      - name: {{ .Values.appointmentService.name }}
-        image: "{{ .Values.image.registry }}/{{ .Values.appointmentService.image }}:{{ .Values.appointmentService.tag }}"
+      - name: appointment-service
+        image: "${IMAGE_REGISTRY:-acrkamaldemodev.azurecr.io}/appointment-service:${APPOINTMENT_TAG:-latest}"
         ports:
-        - containerPort: {{ .Values.appointmentService.port }}
+        - containerPort: 3001
         env:
         - name: PORT
-          value: "{{ .Values.appointmentService.port }}"
+          value: "3001"
         - name: NODE_ENV
           valueFrom:
             configMapKeyRef:
@@ -33,15 +31,15 @@ spec:
               key: NODE_ENV
         resources:
           requests:
-            memory: {{ .Values.appointmentService.resources.requests.memory }}
-            cpu: {{ .Values.appointmentService.resources.requests.cpu }}
+            memory: "128Mi"
+            cpu: "100m"
           limits:
-            memory: {{ .Values.appointmentService.resources.limits.memory }}
-            cpu: {{ .Values.appointmentService.resources.limits.cpu }}
+            memory: "256Mi"
+            cpu: "200m"
         livenessProbe:
           httpGet:
             path: /health
-            port: {{ .Values.appointmentService.port }}
+            port: 3001
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -49,7 +47,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /health
-            port: {{ .Values.appointmentService.port }}
+            port: 3001
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3

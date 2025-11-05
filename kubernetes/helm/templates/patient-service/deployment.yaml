@@ -1,31 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.patientService.name }}
-  namespace: {{ .Values.global.namespace }}
+  name: patient-service
+  namespace: lbg-ns
   labels:
-    app: {{ .Values.patientService.name }}
-    version: {{ .Values.patientService.tag }}
-    environment: {{ .Values.global.environment }}
+    app: patient-service
+    environment: dev
 spec:
-  replicas: {{ .Values.patientService.replicaCount }}
+  replicas: 2
   selector:
     matchLabels:
-      app: {{ .Values.patientService.name }}
+      app: patient-service
   template:
     metadata:
       labels:
-        app: {{ .Values.patientService.name }}
-        version: {{ .Values.patientService.tag }}
+        app: patient-service
     spec:
       containers:
-      - name: {{ .Values.patientService.name }}
-        image: "{{ .Values.image.registry }}/{{ .Values.patientService.image }}:{{ .Values.patientService.tag }}"
+      - name: patient-service
+        image: "${IMAGE_REGISTRY:-acrkamaldemodev.azurecr.io}/patient-service:${PATIENT_TAG:-latest}"
         ports:
-        - containerPort: {{ .Values.patientService.port }}
+        - containerPort: 3000
         env:
         - name: PORT
-          value: "{{ .Values.patientService.port }}"
+          value: "3000"
         - name: NODE_ENV
           valueFrom:
             configMapKeyRef:
@@ -33,15 +31,15 @@ spec:
               key: NODE_ENV
         resources:
           requests:
-            memory: {{ .Values.patientService.resources.requests.memory }}
-            cpu: {{ .Values.patientService.resources.requests.cpu }}
+            memory: "128Mi"
+            cpu: "100m"
           limits:
-            memory: {{ .Values.patientService.resources.limits.memory }}
-            cpu: {{ .Values.patientService.resources.limits.cpu }}
+            memory: "256Mi"
+            cpu: "200m"
         livenessProbe:
           httpGet:
             path: /health
-            port: {{ .Values.patientService.port }}
+            port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -49,7 +47,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /health
-            port: {{ .Values.patientService.port }}
+            port: 3000
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
