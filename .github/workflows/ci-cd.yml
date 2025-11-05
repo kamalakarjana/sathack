@@ -36,21 +36,10 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Check Free Subscription Limits
+      - name: Check Available VM Sizes in East US
         run: |
-          echo "Free Subscription Limitations:"
-          echo "- Only 4 vCPUs total for compute resources"
-          echo "- Limited VM series availability"
-          echo "- Some regions may not be available"
-          echo ""
-          echo "Checking available VM sizes in different regions..."
-          
-          # Check available regions for Free tier
-          for region in "East US" "West US 2" "Central US" "North Europe" "West Europe"; do
-            echo "Checking region: $region"
-            az vm list-sizes --location "$region" --query "[?contains(name, 'Standard_B') || contains(name, 'Standard_D2')] | [:3].{Name:name, CPUs:numberOfCores, Memory:memoryInMb}" --output table 2>/dev/null || echo "Region $region may have limited availability"
-            echo "---"
-          done
+          echo "Checking available VM sizes in East US (DC-series only available):"
+          az vm list-sizes --location "East US" --query "[?contains(name, 'dc2')] | [:5].{Name:name, CPUs:numberOfCores, Memory:memoryInMb}" --output table
 
       - name: Create Resource Group if not exists
         run: |
@@ -177,7 +166,7 @@ jobs:
             -var="aks_cluster_name=kamal-lgb-aks-cluster" \
             -var="vnet_name=kamal-vnet-dev-lbg-app" \
             -var="public_ip_name=kamal-lbg-dev-healthcare-app" \
-            -var="vm_size=Standard_B2s" \
+            -var="vm_size=Standard_DC2s_v3" \
             -var="kubernetes_version=1.33.3" \
             -var="min_count=1" \
             -var="max_count=1" \
@@ -194,7 +183,8 @@ jobs:
         run: |
           cd infrastructure
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          terraform apply -auto-approve tfplan || echo "Terraform apply may have failed, but continuing..."
+          terraform apply -auto-approve tfplan
+          echo "Terraform apply completed successfully"
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
