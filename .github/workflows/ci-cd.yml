@@ -87,11 +87,18 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Check Terraform State
+      - name: Import Existing Resources
         run: |
           cd infrastructure
-          terraform state list || echo "State might be empty or corrupted"
-          terraform refresh -lock=false
+          
+          # Import resource group if it exists
+          if az group show --name kamalakar-demo-dev &>/dev/null; then
+            echo "Importing existing resource group..."
+            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group may already be imported"
+          fi
+          
+          # Refresh state after import
+          terraform refresh
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -135,29 +142,12 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Terraform Apply with Retry
+      - name: Terraform Apply
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
         run: |
           cd infrastructure
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          
-          max_retries=2
-          count=0
-          until terraform apply -auto-approve tfplan; do
-            count=$((count + 1))
-            if [ $count -ge $max_retries ]; then
-              echo "Terraform apply failed after $max_retries attempts"
-              exit 1
-            fi
-            echo "Terraform apply failed, retrying in 10 seconds..."
-            sleep 10
-            terraform init -reconfigure \
-              -backend-config="resource_group_name=kamalakar-demo-dev" \
-              -backend-config="storage_account_name=tfstatelkamalj2k0212" \
-              -backend-config="container_name=lbg-02-12-1994" \
-              -backend-config="key=terraform.lbg-02-12-1994"
-          done
-          
+          terraform apply -auto-approve tfplan
           echo "Terraform apply completed successfully"
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
