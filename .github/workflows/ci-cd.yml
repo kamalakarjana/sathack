@@ -327,9 +327,9 @@ jobs:
           echo "   Appointment Service: http://lbg-app.dev.local/appointments" 
           echo "   Health Check:       http://lbg-app.dev.local/health"
 
-      - name: Run health checks
+      - name: Run comprehensive health checks
         run: |
-          echo "=== Running Health Checks ==="
+          echo "=== Running Comprehensive Health Checks ==="
           sleep 30  # Give pods time to start
           
           # Wait for pods to be ready
@@ -337,14 +337,68 @@ jobs:
           kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
           
-          # Test through ingress
-          echo "Testing through ingress..."
+          echo "=== Pod Status ==="
+          kubectl get pods -n lbg-ns -o wide
+          
+          echo "=== Testing via Port-Forward (Direct Service Access) ==="
+          # Test patient service directly
+          echo "Testing Patient Service:"
+          kubectl port-forward -n lbg-ns service/patient-service 8080:3000 > /dev/null 2>&1 &
+          PATIENT_PID=$!
+          sleep 5
+          if curl -s -f http://localhost:8080/health; then
+            echo "✅ Patient service direct access: HEALTHY"
+          else
+            echo "❌ Patient service direct access: UNHEALTHY"
+          fi
+          kill $PATIENT_PID 2>/dev/null
+          
+          # Test appointment service directly
+          echo "Testing Appointment Service:"
+          kubectl port-forward -n lbg-ns service/appointment-service 8081:3001 > /dev/null 2>&1 &
+          APPOINTMENT_PID=$!
+          sleep 5
+          if curl -s -f http://localhost:8081/health; then
+            echo "✅ Appointment service direct access: HEALTHY"
+          else
+            echo "❌ Appointment service direct access: UNHEALTHY"
+          fi
+          kill $APPOINTMENT_PID 2>/dev/null
+          
+          echo "=== Testing via Ingress ==="
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
-            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
-            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
-            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
+            echo "Testing with External IP: $EXTERNAL_IP"
+            
+            # Test with retry logic
+            echo "Testing /health endpoint (with retry):"
+            for i in {1..3}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health)
+              if [ "$STATUS" = "200" ]; then
+                echo "✅ Ingress /health: SUCCESS (HTTP $STATUS)"
+                break
+              else
+                echo "❌ Ingress /health: FAILED (HTTP $STATUS) - attempt $i"
+                sleep 5
+              fi
+            done
+            
+            echo "Testing /patients endpoint:"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients)
+            echo "HTTP Status: $STATUS"
+            
+            echo "Testing /appointments endpoint:"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments)
+            echo "HTTP Status: $STATUS"
+            
+          else
+            echo "❌ No External IP found for ingress"
           fi
+          
+          echo "=== Final Deployment Status ==="
+          kubectl get all -n lbg-ns
+          echo ""
+          kubectl get ingress -n lbg-ns
 
   cleanup:
     runs-on: ubuntu-latest

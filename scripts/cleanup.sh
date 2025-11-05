@@ -1,21 +1,16 @@
 #!/bin/bash
-echo "=== Manual Cleanup Script ==="
+echo "=== COMPLETE CLEANUP ==="
 
 # Get AKS credentials
 az aks get-credentials --resource-group kamalakar-demo-dev --name kamal-lgb-aks-cluster-dev --overwrite-existing
 
-echo "Cleaning up existing resources..."
+echo "1. Deleting resources..."
+kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=60s
 
-# Delete Helm releases
-helm uninstall lbg-app -n lbg-ns --ignore-not-found=true
+echo "2. Waiting for cleanup..."
+sleep 30
 
-# Delete namespace
-kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s
-
-# Wait
-sleep 20
-
-# Force delete if still exists
+echo "3. Force deleting if needed..."
 if kubectl get namespace lbg-ns &> /dev/null; then
   echo "Forcing namespace deletion..."
   kubectl patch namespace lbg-ns -p '{"metadata":{"finalizers":[]}}' --type=merge
@@ -23,4 +18,7 @@ if kubectl get namespace lbg-ns &> /dev/null; then
   sleep 15
 fi
 
-echo "Cleanup completed!"
+echo "4. Checking ACR images..."
+az acr repository list --name acrkamaldemodev.azurecr.io
+
+echo "=== CLEANUP COMPLETED ==="
