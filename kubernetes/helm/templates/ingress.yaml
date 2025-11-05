@@ -27,25 +27,13 @@ spec:
           service:
             name: {{ if eq .path "/patients" }}{{ $.Values.patientService.name }}
             {{- else if eq .path "/appointments" }}{{ $.Values.appointmentService.name }}
+            {{- else if eq .path "/health" }}{{ $.Values.patientService.name }}
             {{- else }}{{ $.Values.patientService.name }}{{- end }}
             port:
               number: {{ if eq .path "/patients" }}{{ $.Values.patientService.port }}
               {{- else if eq .path "/appointments" }}{{ $.Values.appointmentService.port }}
+              {{- else if eq .path "/health" }}{{ $.Values.patientService.port }}
               {{- else }}{{ $.Values.patientService.port }}{{- end }}
       {{- end }}
-      - path: /patient-service
-        pathType: Prefix
-        backend:
-          service:
-            name: {{ $.Values.patientService.name }}
-            port:
-              number: {{ $.Values.patientService.port }}
-      - path: /appointment-service
-        pathType: Prefix
-        backend:
-          service:
-            name: {{ $.Values.appointmentService.name }}
-            port:
-              number: {{ $.Values.appointmentService.port }}
   {{- end }}
 {{- end }}
