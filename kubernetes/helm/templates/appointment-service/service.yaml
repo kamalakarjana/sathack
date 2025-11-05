@@ -6,6 +6,8 @@ metadata:
   labels:
     app: {{ .Values.appointmentService.name }}
     environment: {{ .Values.global.environment }}
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
 spec:
   selector:
     app: {{ .Values.appointmentService.name }}

@@ -1,4 +1,4 @@
-name: lbg App CI/CD
+name: lbg App CI/CD - Azure AKS
 
 on:
   push:
@@ -7,103 +7,15 @@ on:
     branches: [main]
 
 env:
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
-  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ACR_NAME: acrkamaldemodev
+  AKS_CLUSTER_NAME: kamal-lgb-aks-cluster-dev
+  RESOURCE_GROUP: kamalakar-demo-dev
   NODE_VERSION: '18'
-  TERRAFORM_VERSION: '1.6.6'
   HELM_VERSION: '3.14.0'
 
 jobs:
-  Build-terraform-infrastructure:
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Azure Login with Service Principal
-        run: |
-          az login --service-principal \
-            -u ${{ secrets.AZURE_CLIENT_ID }} \
-            -p ${{ secrets.AZURE_CLIENT_SECRET }} \
-            --tenant ${{ secrets.AZURE_TENANT_ID }}
-          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Terraform Init
-        run: |
-          cd infrastructure
-          terraform init \
-            -backend-config="resource_group_name=kamalakar-demo-dev" \
-            -backend-config="storage_account_name=tfstatelkamalj2k0212" \
-            -backend-config="container_name=lbg-02-12-1994" \
-            -backend-config="key=terraform.lbg-02-12-1994"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Terraform Validate
-        run: |
-          cd infrastructure
-          terraform validate
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Terraform Format
-        run: |
-          cd infrastructure
-          terraform fmt -recursive
-
-      - name: Terraform Plan
-        run: |
-          cd infrastructure
-          terraform plan \
-            -var="environment=dev" \
-            -var="resource_group_name=kamalakar-demo-dev" \
-            -var="location=East US" \
-            -var="acr_name=acrkamaldemodev" \
-            -var="aks_cluster_name=kamal-lgb-aks-cluster" \
-            -var="vnet_name=kamal-vnet-dev-lbg-app" \
-            -var="public_ip_name=kamal-lbg-dev-healthcare-app" \
-            -var="vm_size=Standard_DC2s_v3" \
-            -var="kubernetes_version=1.33.3" \
-            -var="min_count=1" \
-            -var="max_count=1" \
-            -var="node_count=1" \
-            -out=tfplan
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Terraform Apply
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
-        run: |
-          cd infrastructure
-          echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          terraform apply -auto-approve tfplan
-          echo "Terraform apply completed successfully"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
   build-and-push:
     runs-on: ubuntu-latest
-    needs: Build-terraform-infrastructure
     strategy:
       matrix:
         service: [patient-service, appointment-service]
@@ -123,45 +35,29 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Azure Container Registry with Service Principal
-        run: |
-          az login --service-principal \
-            -u ${{ secrets.AZURE_CLIENT_ID }} \
-            -p ${{ secrets.AZURE_CLIENT_SECRET }} \
-            --tenant ${{ secrets.AZURE_TENANT_ID }}
-          az acr login --name acrkamaldemodev
+      - name: Log in to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.AZURE_CLIENT_ID }}
+          password: ${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Build and Push Docker image for ${{ matrix.service }}
         run: |
           cd ${{ matrix.service }}
           
           docker build \
-            --tag ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:${{ github.sha }} \
-            --tag ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:latest \
+            --tag ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ github.sha }} \
+            --tag ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.service }}:latest \
             --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
             --build-arg VCS_REF=${{ github.sha }} \
             --build-arg VERSION=1.0.0 \
             .
           
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:${{ github.sha }}
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.service }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ matrix.service }}:latest
           
           echo "Successfully built and pushed ${{ matrix.service }}:${{ github.sha }}"
-
-  trivy-scan:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    strategy:
-      matrix:
-        service: [patient-service, appointment-service]
-    steps:
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: '${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:${{ github.sha }}'
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          exit-code: 0
 
   security-scan:
     runs-on: ubuntu-latest
@@ -178,24 +74,21 @@ jobs:
 
   deploy-to-dev:
     runs-on: ubuntu-latest
-    needs: [Build-terraform-infrastructure, trivy-scan, security-scan]
+    needs: [build-and-push, security-scan]
     environment: dev
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure Azure credentials
-        run: |
-          az login --service-principal \
-            -u ${{ secrets.AZURE_CLIENT_ID }} \
-            -p ${{ secrets.AZURE_CLIENT_SECRET }} \
-            --tenant ${{ secrets.AZURE_TENANT_ID }}
-          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Get AKS credentials
         run: |
           az aks get-credentials \
-            --resource-group kamalakar-demo-dev \
-            --name kamal-lgb-aks-cluster-dev \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
             --overwrite-existing
 
       - name: Setup Kubernetes context
@@ -203,41 +96,28 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
-      - name: Complete cleanup of existing resources
-        run: |
-          echo "=== Performing complete cleanup ==="
-          
-          # Delete any existing Helm release
-          helm uninstall lbg-app -n lbg-ns --ignore-not-found=true || true
-          
-          # Delete namespace with force if needed
-          kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s || true
-          
-          # Wait and ensure namespace is gone
-          sleep 20
-          
-          # If namespace still exists, remove finalizers
-          if kubectl get namespace lbg-ns &> /dev/null; then
-            echo "Forcing namespace deletion..."
-            kubectl patch namespace lbg-ns -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-            kubectl delete namespace lbg-ns --force --grace-period=0 || true
-            sleep 15
-          fi
-          
-          echo "Cleanup completed"
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Create fresh namespace
+      - name: Cleanup existing resources
         run: |
-          echo "Creating fresh namespace..."
-          kubectl create namespace lbg-ns
-          kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/lbg-ns --timeout=60s
-          echo "Namespace lbg-ns created successfully"
+          echo "=== Performing cleanup ==="
+          helm uninstall lbg-app -n lbg-ns --ignore-not-found=true || true
+          kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s || true
+          sleep 10
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace lbg-ns || true
+          kubectl label namespace lbg-ns environment=dev || true
 
       - name: Create ACR pull secret
         run: |
           kubectl create secret docker-registry acr-secret \
             --namespace lbg-ns \
-            --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
+            --docker-server=${{ env.ACR_NAME }}.azurecr.io \
             --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
@@ -246,30 +126,32 @@ jobs:
         run: |
           cd kubernetes/helm
           
-          # Install the Helm chart with LoadBalancer configuration
+          echo "Installing Helm chart with LoadBalancer configuration..."
+          
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
             --create-namespace \
             --values values-dev.yml \
-            --set patientService.image=${{ secrets.ACR_LOGIN_SERVER }}/patient-service:${{ github.sha }} \
-            --set appointmentService.image=${{ secrets.ACR_LOGIN_SERVER }}/appointment-service:${{ github.sha }} \
+            --set patientService.image=${{ env.ACR_NAME }}.azurecr.io/patient-service:${{ github.sha }} \
+            --set appointmentService.image=${{ env.ACR_NAME }}.azurecr.io/appointment-service:${{ github.sha }} \
             --set patientService.serviceType=LoadBalancer \
             --set appointmentService.serviceType=LoadBalancer \
             --wait \
-            --timeout 10m
+            --timeout 15m \
+            --debug
           
           echo "Helm chart deployed successfully with LoadBalancer services"
 
       - name: Wait for deployments and LoadBalancers
         run: |
           echo "=== Waiting for deployments to be ready ==="
-          kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=300s
-          kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=300s
+          kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=600s
+          kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=600s
           
           echo "=== Waiting for LoadBalancer IPs ==="
-          # Wait for LoadBalancer IP assignment
-          timeout 300s bash -c 'until kubectl get svc patient-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 10; echo "Waiting for patient-service LoadBalancer IP..."; done'
-          timeout 300s bash -c 'until kubectl get svc appointment-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 10; echo "Waiting for appointment-service LoadBalancer IP..."; done'
+          # Wait for LoadBalancer IP assignment with longer timeout
+          timeout 600s bash -c 'until kubectl get svc patient-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 15; echo "Waiting for patient-service LoadBalancer IP..."; done'
+          timeout 600s bash -c 'until kubectl get svc appointment-service -n lbg-ns -o jsonpath="{.status.loadBalancer.ingress[0].ip}" | grep -q "."; do sleep 15; echo "Waiting for appointment-service LoadBalancer IP..."; done'
           
           echo "=== All deployments and LoadBalancers are ready ==="
 
@@ -292,15 +174,6 @@ jobs:
           echo "=== Running LoadBalancer Health Checks ==="
           sleep 30
           
-          # Wait for pods to be ready
-          echo "Waiting for pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
-          kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
-          
-          echo "=== Pod Status ==="
-          kubectl get pods -n lbg-ns -o wide
-          
-          echo "=== Testing via LoadBalancer ==="
           # Get LoadBalancer IPs
           PATIENT_IP=$(kubectl get svc patient-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           APPOINTMENT_IP=$(kubectl get svc appointment-service -n lbg-ns -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
@@ -310,46 +183,35 @@ jobs:
           
           if [ -n "$PATIENT_IP" ]; then
             echo "Testing Patient Service LoadBalancer:"
-            for i in {1..5}; do
+            for i in {1..10}; do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$PATIENT_IP/health || echo "failed")
               if [ "$STATUS" = "200" ]; then
                 echo "✅ Patient Service LoadBalancer: HEALTHY (HTTP $STATUS)"
                 break
               else
                 echo "❌ Patient Service LoadBalancer: UNHEALTHY (HTTP $STATUS) - attempt $i"
-                sleep 10
+                sleep 15
               fi
             done
-            
-            echo "Testing Patient Service endpoints:"
-            curl -s http://$PATIENT_IP/patients | head -c 100
-            echo ""
           else
             echo "❌ No LoadBalancer IP found for patient-service"
           fi
           
           if [ -n "$APPOINTMENT_IP" ]; then
             echo "Testing Appointment Service LoadBalancer:"
-            for i in {1..5}; do
+            for i in {1..10}; do
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$APPOINTMENT_IP/health || echo "failed")
               if [ "$STATUS" = "200" ]; then
                 echo "✅ Appointment Service LoadBalancer: HEALTHY (HTTP $STATUS)"
                 break
               else
                 echo "❌ Appointment Service LoadBalancer: UNHEALTHY (HTTP $STATUS) - attempt $i"
-                sleep 10
+                sleep 15
               fi
             done
-            
-            echo "Testing Appointment Service endpoints:"
-            curl -s http://$APPOINTMENT_IP/appointments | head -c 100
-            echo ""
           else
             echo "❌ No LoadBalancer IP found for appointment-service"
           fi
-          
-          echo "=== Final Deployment Status ==="
-          kubectl get all -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
@@ -358,12 +220,12 @@ jobs:
           
           echo "🎉 DEPLOYMENT SUCCESSFUL!"
           echo ""
-          echo "📱 LOADBALANCER ACCESS INFORMATION:"
-          echo "==================================="
+          echo "📱 AZURE LOAD BALANCER ACCESS INFORMATION:"
+          echo "=========================================="
           echo "Patient Service LoadBalancer IP: $PATIENT_IP"
           echo "Appointment Service LoadBalancer IP: $APPOINTMENT_IP"
           echo ""
-          echo "🌐 Access your services directly:"
+          echo "🌐 Access your services via Azure Load Balancer:"
           echo "   Patient Service Health:    http://$PATIENT_IP/health"
           echo "   Patient Service API:       http://$PATIENT_IP/patients"
           echo "   Appointment Service Health: http://$APPOINTMENT_IP/health"

@@ -49,12 +49,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+Generate ACR credentials
 */}}
-{{- define "lbg-app.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "lbg-app.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
+{{- define "lbg-app.acrCredentials" -}}
+{{- $registry := .Values.image.registry }}
+{{- $username := "00000000-0000-0000-0000-000000000000" }}
+{{- $password := "azure-service-principal-password" }}
+{{- $auth := printf "%s:%s" $username $password | b64enc }}
+{{- printf "{\"auths\":{\"%s\":{\"username\":\"%s\",\"password\":\"%s\",\"auth\":\"%s\"}}}" $registry $username $password $auth | b64enc }}
 {{- end }}
