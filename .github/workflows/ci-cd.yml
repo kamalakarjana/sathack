@@ -262,30 +262,21 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy using kubectl apply directly
+      - name: Install Helm chart
         run: |
           cd kubernetes/helm
           
-          echo "=== Deploying ConfigMap ==="
-          kubectl apply -f templates/configMap.yaml -n lbg-ns
+          # Install the Helm chart
+          helm upgrade --install lbg-app . \
+            --namespace lbg-ns \
+            --create-namespace \
+            --values values-dev.yml \
+            --set patientService.image=${{ secrets.ACR_LOGIN_SERVER }}/patient-service:${{ github.sha }} \
+            --set appointmentService.image=${{ secrets.ACR_LOGIN_SERVER }}/appointment-service:${{ github.sha }} \
+            --wait \
+            --timeout 10m
           
-          echo "=== Deploying Services ==="
-          kubectl apply -f templates/patient-service/service.yaml -n lbg-ns
-          kubectl apply -f templates/appointment-service/service.yaml -n lbg-ns
-          
-          echo "=== Deploying Deployments ==="
-          kubectl apply -f templates/patient-service/deployment.yaml -n lbg-ns
-          kubectl apply -f templates/appointment-service/deployment.yaml -n lbg-ns
-          
-          echo "=== Deploying HPA ==="
-          kubectl apply -f templates/patient-service/hpa.yaml -n lbg-ns
-          kubectl apply -f templates/appointment-service/hpa.yaml -n lbg-ns
-          
-          echo "=== Deploying Ingress ==="
-          # Try to apply ingress, but continue even if it fails
-          kubectl apply -f templates/ingress.yaml -n lbg-ns || echo "Ingress deployment had issues, but continuing deployment..."
-          
-          echo "=== All resources deployed successfully ==="
+          echo "Helm chart deployed successfully"
 
       - name: Wait for deployments
         run: |
@@ -306,32 +297,15 @@ jobs:
           kubectl get svc -n lbg-ns
           echo ""
           echo "=== Ingress ==="
-          kubectl get ingress -n lbg-ns || echo "No ingress found or ingress has issues"
+          kubectl get ingress -n lbg-ns
           echo ""
           echo "=== HPA ==="
           kubectl get hpa -n lbg-ns
 
-      - name: Get Browser Access URLs
-        run: |
-          EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "🎉 DEPLOYMENT SUCCESSFUL!"
-          echo ""
-          echo "📱 BROWSER ACCESS INFORMATION:"
-          echo "================================"
-          echo "External IP: $EXTERNAL_IP"
-          echo ""
-          echo "📍 Add this to your /etc/hosts file:"
-          echo "$EXTERNAL_IP lbg-app.dev.local"
-          echo ""
-          echo "🌐 Access your services in browser:"
-          echo "   Patient Service:    http://lbg-app.dev.local/patients"
-          echo "   Appointment Service: http://lbg-app.dev.local/appointments" 
-          echo "   Health Check:       http://lbg-app.dev.local/health"
-
       - name: Run comprehensive health checks
         run: |
           echo "=== Running Comprehensive Health Checks ==="
-          sleep 30  # Give pods time to start
+          sleep 30
           
           # Wait for pods to be ready
           echo "Waiting for pods to be ready..."
@@ -371,25 +345,25 @@ jobs:
           if [ -n "$EXTERNAL_IP" ]; then
             echo "Testing with External IP: $EXTERNAL_IP"
             
-            # Test with retry logic
+            # Test with retry logic and timeout
             echo "Testing /health endpoint (with retry):"
-            for i in {1..3}; do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health)
+            for i in {1..5}; do
+              STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health || echo "timeout")
               if [ "$STATUS" = "200" ]; then
                 echo "✅ Ingress /health: SUCCESS (HTTP $STATUS)"
                 break
               else
                 echo "❌ Ingress /health: FAILED (HTTP $STATUS) - attempt $i"
-                sleep 5
+                sleep 10
               fi
             done
             
             echo "Testing /patients endpoint:"
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients)
+            STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients || echo "timeout")
             echo "HTTP Status: $STATUS"
             
             echo "Testing /appointments endpoint:"
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments)
+            STATUS=$(timeout 10 curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments || echo "timeout")
             echo "HTTP Status: $STATUS"
             
           else
@@ -399,7 +373,24 @@ jobs:
           echo "=== Final Deployment Status ==="
           kubectl get all -n lbg-ns
           echo ""
-          kubectl get ingress -n lbg-ns || echo "Ingress not available"
+          kubectl describe ingress -n lbg-ns
+
+      - name: Get Browser Access URLs
+        run: |
+          EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "🎉 DEPLOYMENT SUCCESSFUL!"
+          echo ""
+          echo "📱 BROWSER ACCESS INFORMATION:"
+          echo "================================"
+          echo "External IP: $EXTERNAL_IP"
+          echo ""
+          echo "📍 Add this to your /etc/hosts file:"
+          echo "$EXTERNAL_IP lbg-app.dev.local"
+          echo ""
+          echo "🌐 Access your services in browser:"
+          echo "   Health Check:       http://lbg-app.dev.local/health"
+          echo "   Patient Service:    http://lbg-app.dev.local/patients"
+          echo "   Appointment Service: http://lbg-app.dev.local/appointments"
 
   cleanup:
     runs-on: ubuntu-latest

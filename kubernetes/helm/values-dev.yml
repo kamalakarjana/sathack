@@ -48,16 +48,6 @@ appointmentService:
 
 ingress:
   enabled: true
+  name: lbg-app-ingress
   className: "nginx"
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-  hosts:
-    - host: lbg-app.dev.local
-      paths:
-        - path: /patients
-          pathType: Prefix
-        - path: /appointments
-          pathType: Prefix
-        - path: /health
-          pathType: Prefix
+  host: "lbg-app.dev.local"

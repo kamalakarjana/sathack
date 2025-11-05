@@ -4,30 +4,35 @@ metadata:
   name: lbg-app-ingress
   namespace: lbg-ns
   annotations:
-    kubernetes.io/ingress.class: azure/application-gateway
-    appgw.ingress.kubernetes.io/use-private-ip: "false"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
 spec:
+  ingressClassName: nginx
   rules:
-  - http:
-      paths:
-      - path: /patients
-        pathType: Prefix
-        backend:
-          service:
-            name: patient-service
-            port:
-              number: 3000
-      - path: /appointments
-        pathType: Prefix
-        backend:
-          service:
-            name: appointment-service
-            port:
-              number: 3001
-      - path: /health
-        pathType: Prefix
-        backend:
-          service:
-            name: patient-service
-            port:
-              number: 3000
+    - host: lbg-app.dev.local
+      http:
+        paths:
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: patient-service
+                port:
+                  number: 3000
+          - path: /patients
+            pathType: Prefix
+            backend:
+              service:
+                name: patient-service
+                port:
+                  number: 3000
+          - path: /appointments
+            pathType: Prefix
+            backend:
+              service:
+                name: appointment-service
+                port:
+                  number: 3001
