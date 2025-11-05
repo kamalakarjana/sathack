@@ -13,7 +13,7 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   NODE_VERSION: '18'
-  TERRAFORM_VERSION: '1.6.6'  # CHANGED: Downgraded to stable version
+  TERRAFORM_VERSION: '1.6.6'
   HELM_VERSION: '3.14.0'
 
 jobs:
@@ -87,18 +87,42 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Import Existing Resources
+      - name: Import All Existing Resources
         run: |
           cd infrastructure
           
-          # Import resource group if it exists
+          # Import resource group
           if az group show --name kamalakar-demo-dev &>/dev/null; then
-            echo "Importing existing resource group..."
-            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group may already be imported"
+            echo "Importing resource group..."
+            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group already imported or error"
           fi
           
-          # Refresh state after import
-          terraform refresh -lock-timeout=10m
+          # Import ACR
+          if az acr show --name acrkamaldemodev --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Importing ACR..."
+            terraform import module.acr.azurerm_container_registry.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerRegistry/registries/acrkamaldemodev || echo "ACR already imported or error"
+          fi
+          
+          # Import Virtual Network
+          if az network vnet show --name kamal-vnet-dev-lbg-app --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Importing Virtual Network..."
+            terraform import module.network.azurerm_virtual_network.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/virtualNetworks/kamal-vnet-dev-lbg-app || echo "VNet already imported or error"
+          fi
+          
+          # Import Public IP
+          if az network public-ip show --name kamal-lbg-dev-healthcare-app --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Importing Public IP..."
+            terraform import azurerm_public_ip.pip /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.Network/publicIPAddresses/kamal-lbg-dev-healthcare-app || echo "Public IP already imported or error"
+          fi
+          
+          # Import AKS Cluster if exists
+          if az aks show --name kamal-lgb-aks-cluster-dev --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Importing AKS Cluster..."
+            terraform import module.aks.azurerm_kubernetes_cluster.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerService/managedClusters/kamal-lgb-aks-cluster-dev || echo "AKS already imported or error"
+          fi
+          
+          echo "Refreshing Terraform state..."
+          terraform refresh
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -142,31 +166,13 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Terraform Apply with Crash Recovery
+      - name: Terraform Apply
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
         run: |
           cd infrastructure
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          
-          # Apply with increased timeout and retry logic for crashes
-          max_attempts=3
-          attempt=1
-          while [ $attempt -le $max_attempts ]; do
-            echo "Attempt $attempt of $max_attempts"
-            if terraform apply -auto-approve -lock-timeout=10m tfplan; then
-              echo "Terraform apply completed successfully"
-              break
-            else
-              echo "Terraform apply failed or crashed"
-              if [ $attempt -eq $max_attempts ]; then
-                echo "All attempts failed. Exiting..."
-                exit 1
-              fi
-              echo "Waiting 30 seconds before retry..."
-              sleep 30
-              attempt=$((attempt + 1))
-            fi
-          done
+          terraform apply -auto-approve tfplan
+          echo "Terraform apply completed successfully"
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
