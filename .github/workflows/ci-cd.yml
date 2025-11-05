@@ -36,12 +36,49 @@ jobs:
             --tenant ${{ secrets.AZURE_TENANT_ID }}
           az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Create Resource Group if not exists
+        run: |
+          if ! az group show --name kamalakar-demo-dev &>/dev/null; then
+            echo "Creating resource group: kamalakar-demo-dev"
+            az group create \
+              --name kamalakar-demo-dev \
+              --location "East US" \
+              --tags "Environment=dev" "Project=lbg-app"
+          else
+            echo "Resource group already exists"
+          fi
+
+      - name: Create Storage Account for Terraform Backend
+        run: |
+          # Check if storage account exists
+          if ! az storage account show --name tfstatelkamalj2k0212 --resource-group kamalakar-demo-dev &>/dev/null; then
+            echo "Creating storage account: tfstatelkamalj2k0212"
+            az storage account create \
+              --name tfstatelkamalj2k0212 \
+              --resource-group kamalakar-demo-dev \
+              --location "East US" \
+              --sku Standard_LRS \
+              --kind StorageV2
+            
+            echo "Waiting for storage account to be provisioned..."
+            sleep 30
+            
+            echo "Creating blob container"
+            az storage container create \
+              --name lbg-02-12-1994 \
+              --account-name tfstatelkamalj2k0212 \
+              --auth-mode login
+            echo "Storage account and container created successfully"
+          else
+            echo "Storage account already exists"
+          fi
+
       - name: Terraform Init
         run: |
           cd infrastructure
           terraform init \
             -backend-config="resource_group_name=kamalakar-demo-dev" \
-            -backend-config="storage_account_name=${{ secrets.STORAGE_ACCOUNT_NAME }}" \
+            -backend-config="storage_account_name=tfstatelkamalj2k0212" \
             -backend-config="container_name=lbg-02-12-1994" \
             -backend-config="key=terraform.lbg-02-12-1994"
         env:
@@ -55,21 +92,6 @@ jobs:
           cd infrastructure
           terraform state list || echo "State might be empty or corrupted"
           terraform refresh -lock=false
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: Import Existing Resource Group
-        run: |
-          cd infrastructure
-          if az group show --name kamalakar-demo-dev &>/dev/null; then
-            echo "Importing existing resource group..."
-            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Import failed or already exists"
-          else
-            echo "Resource group does not exist, skipping import"
-          fi
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -97,11 +119,11 @@ jobs:
           terraform plan \
             -var="environment=dev" \
             -var="resource_group_name=kamalakar-demo-dev" \
-            -var="location=Central US" \
+            -var="location=East US" \
             -var="acr_name=acrkamaldemodev" \
-            -var="aks_cluster_name=lbg-aks-cluster" \
+            -var="aks_cluster_name=kamal-lgb-aks-cluster" \
             -var="vnet_name=kamal-vnet-dev-lbg-app" \
-            -var="public_ip_name=pip-lb-dev-lbg-app" \
+            -var="public_ip_name=kamal-lbg-dev-healthcare-app" \
             -var="vm_size=Standard_D2s_v3" \
             -var="kubernetes_version=1.33.3" \
             -var="min_count=1" \
@@ -131,7 +153,7 @@ jobs:
             sleep 10
             terraform init -reconfigure \
               -backend-config="resource_group_name=kamalakar-demo-dev" \
-              -backend-config="storage_account_name=${{ secrets.STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="storage_account_name=tfstatelkamalj2k0212" \
               -backend-config="container_name=lbg-02-12-1994" \
               -backend-config="key=terraform.lbg-02-12-1994"
           done
@@ -254,7 +276,7 @@ jobs:
         run: |
           az aks get-credentials \
             --resource-group kamalakar-demo-dev \
-            --name lbg-aks-cluster-dev \
+            --name kamal-lgb-aks-cluster-dev \
             --overwrite-existing
 
       - name: Setup Kubernetes context
