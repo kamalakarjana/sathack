@@ -231,10 +231,39 @@ jobs:
           echo "External IP: $EXTERNAL_IP"
           echo "external_ip=$EXTERNAL_IP" >> $GITHUB_ENV
 
-      - name: Create namespace explicitly before Helm
+      - name: Clean up existing namespace if needed
         run: |
-          echo "Creating namespace lbg-ns explicitly..."
-          kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
+          if kubectl get namespace lbg-ns >/dev/null 2>&1; then
+            echo "Namespace lbg-ns exists, checking if it's managed by Helm..."
+            if kubectl get namespace lbg-ns -o jsonpath='{.metadata.labels}' | grep -q "app.kubernetes.io/managed-by"; then
+              echo "Namespace is managed by Helm, proceeding..."
+            else
+              echo "Namespace exists but not managed by Helm. Deleting for clean installation..."
+              kubectl delete namespace lbg-ns --timeout=30s
+              echo "Waiting for namespace deletion..."
+              sleep 10
+            fi
+          else
+            echo "Namespace lbg-ns does not exist"
+          fi
+
+      - name: Create namespace with Helm labels
+        run: |
+          echo "Creating namespace lbg-ns with proper Helm labels..."
+          cat <<NAMESPACE_EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: lbg-ns
+            labels:
+              name: lbg-ns
+              environment: dev
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: lbg-app
+              meta.helm.sh/release-namespace: lbg-ns
+          NAMESPACE_EOF
+          
           echo "Waiting for namespace to be active..."
           kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/lbg-ns --timeout=60s
           echo "Namespace lbg-ns is ready"
@@ -303,6 +332,12 @@ jobs:
           echo ""
           echo "=== Services ==="
           kubectl get svc -n lbg-ns
+          echo ""
+          echo "=== ConfigMaps ==="
+          kubectl get configmaps -n lbg-ns
+          echo ""
+          echo "=== Secrets ==="
+          kubectl get secrets -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
@@ -322,7 +357,9 @@ jobs:
           echo "   Health Check:       http://lbg-app.dev.local/health"
           echo ""
           echo "💡 Quick test command:"
-          echo "   echo '$EXTERNAL_IP lbg-app.dev.local' | sudo tee -a /etc/hosts"
+          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/health"
+          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/patients"
+          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/appointments"
 
       - name: Run comprehensive health checks
         run: |
@@ -333,24 +370,46 @@ jobs:
           kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
           
+          echo "=== Pod Status ==="
+          kubectl get pods -n lbg-ns -o wide
+          
           # Test internal health endpoints
-          echo "Testing internal service health..."
+          echo "=== Testing internal service health ==="
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://localhost:3000/health && echo "✅ Patient service internal health: OK" || echo "❌ Patient service internal health: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://localhost:3001/health && echo "✅ Appointment service internal health: OK" || echo "❌ Appointment service internal health: FAILED"
           
           # Test service-to-service communication
-          echo "Testing service communication..."
+          echo "=== Testing service communication ==="
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://appointment-service:3001/health && echo "✅ Patient -> Appointment communication: OK" || echo "❌ Patient -> Appointment communication: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://patient-service:3000/health && echo "✅ Appointment -> Patient communication: OK" || echo "❌ Appointment -> Patient communication: FAILED"
           
           # Test through ingress (if available)
-          echo "Testing through ingress..."
+          echo "=== Testing through ingress ==="
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
-            curl -s -f http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
-            curl -s -f http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
-            curl -s -f http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
+            echo "Testing with External IP: $EXTERNAL_IP"
+            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
+            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
+            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
+          else
+            echo "❌ No External IP found for ingress"
           fi
+
+      - name: Debug information
+        if: always()
+        run: |
+          echo "=== Debug Information ==="
+          echo "Current namespace status:"
+          kubectl get namespace lbg-ns -o yaml
+          echo ""
+          echo "Helm releases:"
+          helm list -n lbg-ns
+          echo ""
+          echo "Pod logs (patient-service):"
+          kubectl logs -n lbg-ns -l app=patient-service --tail=50
+          echo ""
+          echo "Pod logs (appointment-service):"
+          kubectl logs -n lbg-ns -l app=appointment-service --tail=50
 
   cleanup:
     runs-on: ubuntu-latest
