@@ -13,7 +13,7 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   NODE_VERSION: '18'
-  TERRAFORM_VERSION: '1.7.5'
+  TERRAFORM_VERSION: '1.6.6'  # CHANGED: Downgraded to stable version
   HELM_VERSION: '3.14.0'
 
 jobs:
@@ -98,7 +98,7 @@ jobs:
           fi
           
           # Refresh state after import
-          terraform refresh
+          terraform refresh -lock-timeout=10m
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -142,13 +142,31 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Terraform Apply
+      - name: Terraform Apply with Crash Recovery
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
         run: |
           cd infrastructure
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          terraform apply -auto-approve tfplan
-          echo "Terraform apply completed successfully"
+          
+          # Apply with increased timeout and retry logic for crashes
+          max_attempts=3
+          attempt=1
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts"
+            if terraform apply -auto-approve -lock-timeout=10m tfplan; then
+              echo "Terraform apply completed successfully"
+              break
+            else
+              echo "Terraform apply failed or crashed"
+              if [ $attempt -eq $max_attempts ]; then
+                echo "All attempts failed. Exiting..."
+                exit 1
+              fi
+              echo "Waiting 30 seconds before retry..."
+              sleep 30
+              attempt=$((attempt + 1))
+            fi
+          done
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
