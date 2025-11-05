@@ -210,19 +210,6 @@ jobs:
           kubectl config current-context
           kubectl get nodes
 
-      - name: Create ACR pull secret
-        run: |
-          # Create namespace if not exists
-          kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Create ACR pull secret
-          kubectl create secret docker-registry acr-secret \
-            --namespace lbg-ns \
-            --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
-            --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
-            --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
-            --dry-run=client -o yaml | kubectl apply -f -
-
       - name: Install Nginx Ingress Controller
         run: |
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -244,70 +231,78 @@ jobs:
           echo "External IP: $EXTERNAL_IP"
           echo "external_ip=$EXTERNAL_IP" >> $GITHUB_ENV
 
-      - name: Handle existing namespace
+      - name: Create namespace explicitly before Helm
         run: |
-          if kubectl get namespace lbg-ns >/dev/null 2>&1; then
-            echo "Namespace lbg-ns already exists"
-            if helm list -n lbg-ns -q | grep -q "lbg-app"; then
-              echo "Helm release 'lbg-app' exists, will perform upgrade"
-            else
-              echo "No Helm release found. Deleting namespace for clean installation..."
-              kubectl delete namespace lbg-ns
-              if kubectl wait --for=delete namespace/lbg-ns --timeout=120s 2>/dev/null; then
-                echo "Namespace deleted successfully"
-              else
-                echo "Namespace deletion completed"
-              fi
-              sleep 10
-            fi
-          else
-            echo "Namespace lbg-ns does not exist, it will be created"
-          fi
+          echo "Creating namespace lbg-ns explicitly..."
+          kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
+          echo "Waiting for namespace to be active..."
+          kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/lbg-ns --timeout=60s
+          echo "Namespace lbg-ns is ready"
+
+      - name: Create ACR pull secret
+        run: |
+          kubectl create secret docker-registry acr-secret \
+            --namespace lbg-ns \
+            --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
+            --docker-username=${{ secrets.AZURE_CLIENT_ID }} \
+            --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
+            --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy to AKS using Helm
         run: |
           cd kubernetes/helm
           
-          # Check if values-dev.yml exists, if not use command line values
+          echo "=== Checking values-dev.yml ==="
           if [ -f "values-dev.yml" ]; then
             echo "Using values-dev.yml file"
             VALUES_FILE="-f values-dev.yml"
+            echo "Values file content:"
+            cat values-dev.yml
           else
             echo "values-dev.yml not found, using command line values"
             VALUES_FILE=""
           fi
           
-          # Template test first
+          echo "=== Helm Template Test ==="
           helm template lbg-app . \
             --namespace lbg-ns \
             $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
-            --set image.pullSecrets[0]=acr-secret
+            --set image.pullSecrets[0].name=acr-secret
           
-          # Install/Upgrade the release
+          echo "=== Helm Deployment ==="
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
+            --create-namespace \
             --wait \
             --timeout 15m \
             $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
-            --set image.pullSecrets[0]=acr-secret \
+            --set image.pullSecrets[0].name=acr-secret \
             --atomic
+          
+          echo "=== Helm Deployment Completed ==="
 
       - name: Verify deployment
         run: |
           echo "=== Deployment Verification ==="
           kubectl get all -n lbg-ns
           echo ""
+          echo "=== Ingress ==="
           kubectl get ingress -n lbg-ns
           echo ""
-          kubectl get hpa -n lbg-ns 2>/dev/null || echo "HPA not configured"
+          echo "=== HPA ==="
+          kubectl get hpa -n lbg-ns
           echo ""
-          kubectl get pvc -n lbg-ns 2>/dev/null || echo "No PVCs found"
+          echo "=== Pods Status ==="
+          kubectl get pods -n lbg-ns -o wide
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
@@ -332,19 +327,29 @@ jobs:
       - name: Run comprehensive health checks
         run: |
           echo "=== Running Health Checks ==="
+          
+          # Wait for pods to be ready
           echo "Waiting for pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
+          
+          # Test internal health endpoints
           echo "Testing internal service health..."
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://localhost:3000/health && echo "✅ Patient service internal health: OK" || echo "❌ Patient service internal health: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://localhost:3001/health && echo "✅ Appointment service internal health: OK" || echo "❌ Appointment service internal health: FAILED"
+          
+          # Test service-to-service communication
           echo "Testing service communication..."
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://appointment-service:3001/health && echo "✅ Patient -> Appointment communication: OK" || echo "❌ Patient -> Appointment communication: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://patient-service:3000/health && echo "✅ Appointment -> Patient communication: OK" || echo "❌ Appointment -> Patient communication: FAILED"
+          
+          # Test through ingress (if available)
           echo "Testing through ingress..."
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
             curl -s -f http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
+            curl -s -f http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
+            curl -s -f http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
           fi
 
   cleanup:
