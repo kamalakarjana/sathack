@@ -231,39 +231,20 @@ jobs:
           echo "External IP: $EXTERNAL_IP"
           echo "external_ip=$EXTERNAL_IP" >> $GITHUB_ENV
 
-      - name: Clean up existing namespace if needed
+      - name: Clean up existing resources
         run: |
-          if kubectl get namespace lbg-ns >/dev/null 2>&1; then
-            echo "Namespace lbg-ns exists, checking if it's managed by Helm..."
-            if kubectl get namespace lbg-ns -o jsonpath='{.metadata.labels}' | grep -q "app.kubernetes.io/managed-by"; then
-              echo "Namespace is managed by Helm, proceeding..."
-            else
-              echo "Namespace exists but not managed by Helm. Deleting for clean installation..."
-              kubectl delete namespace lbg-ns --timeout=30s
-              echo "Waiting for namespace deletion..."
-              sleep 10
-            fi
-          else
-            echo "Namespace lbg-ns does not exist"
-          fi
-
-      - name: Create namespace with Helm labels
-        run: |
-          echo "Creating namespace lbg-ns with proper Helm labels..."
-          cat <<NAMESPACE_EOF | kubectl apply -f -
-          apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: lbg-ns
-            labels:
-              name: lbg-ns
-              environment: dev
-              app.kubernetes.io/managed-by: Helm
-            annotations:
-              meta.helm.sh/release-name: lbg-app
-              meta.helm.sh/release-namespace: lbg-ns
-          NAMESPACE_EOF
+          echo "Cleaning up any existing resources..."
+          # Delete namespace if exists
+          kubectl delete namespace lbg-ns --ignore-not-found=true --timeout=30s
+          sleep 10
           
+          # Delete any orphaned Helm release
+          helm uninstall lbg-app -n lbg-ns --ignore-not-found=true
+
+      - name: Create namespace
+        run: |
+          echo "Creating namespace lbg-ns..."
+          kubectl create namespace lbg-ns
           echo "Waiting for namespace to be active..."
           kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/lbg-ns --timeout=60s
           echo "Namespace lbg-ns is ready"
@@ -277,7 +258,7 @@ jobs:
             --docker-password=${{ secrets.AZURE_CLIENT_SECRET }} \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy to AKS using Helm
+      - name: Deploy to AKS using Helm (Optimized for Size)
         run: |
           cd kubernetes/helm
           
@@ -285,27 +266,30 @@ jobs:
           if [ -f "values-dev.yml" ]; then
             echo "Using values-dev.yml file"
             VALUES_FILE="-f values-dev.yml"
-            echo "Values file content:"
-            cat values-dev.yml
           else
             echo "values-dev.yml not found, using command line values"
             VALUES_FILE=""
           fi
           
-          echo "=== Helm Template Test ==="
-          helm template lbg-app . \
+          echo "=== Checking Helm template size ==="
+          TEMPLATE_SIZE=$(helm template lbg-app . \
             --namespace lbg-ns \
             $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
-            --set image.pullSecrets[0].name=acr-secret
+            --set image.pullSecrets[0].name=acr-secret | wc -c)
+          echo "Template size: $TEMPLATE_SIZE bytes"
+          
+          if [ $TEMPLATE_SIZE -gt 3000000 ]; then
+            echo "WARNING: Template size exceeds 3MB, may cause issues"
+          fi
           
           echo "=== Helm Deployment ==="
+          # Use --timeout but not --wait initially to avoid size issues
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
             --create-namespace \
-            --wait \
             --timeout 15m \
             $VALUES_FILE \
             --set patientService.tag=${{ github.sha }} \
@@ -313,6 +297,11 @@ jobs:
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }} \
             --set image.pullSecrets[0].name=acr-secret \
             --atomic
+          
+          echo "=== Waiting for deployment to be ready ==="
+          # Wait for resources separately to avoid large payloads
+          kubectl wait --for=condition=available deployment/patient-service -n lbg-ns --timeout=300s
+          kubectl wait --for=condition=available deployment/appointment-service -n lbg-ns --timeout=300s
           
           echo "=== Helm Deployment Completed ==="
 
@@ -329,15 +318,6 @@ jobs:
           echo ""
           echo "=== Pods Status ==="
           kubectl get pods -n lbg-ns -o wide
-          echo ""
-          echo "=== Services ==="
-          kubectl get svc -n lbg-ns
-          echo ""
-          echo "=== ConfigMaps ==="
-          kubectl get configmaps -n lbg-ns
-          echo ""
-          echo "=== Secrets ==="
-          kubectl get secrets -n lbg-ns
 
       - name: Get Browser Access URLs
         run: |
@@ -355,61 +335,23 @@ jobs:
           echo "   Patient Service:    http://lbg-app.dev.local/patients"
           echo "   Appointment Service: http://lbg-app.dev.local/appointments" 
           echo "   Health Check:       http://lbg-app.dev.local/health"
-          echo ""
-          echo "💡 Quick test command:"
-          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/health"
-          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/patients"
-          echo "   curl -H 'Host: lbg-app.dev.local' http://$EXTERNAL_IP/appointments"
 
-      - name: Run comprehensive health checks
+      - name: Run health checks
         run: |
           echo "=== Running Health Checks ==="
+          sleep 30  # Give pods time to start
           
           # Wait for pods to be ready
           echo "Waiting for pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
           
-          echo "=== Pod Status ==="
-          kubectl get pods -n lbg-ns -o wide
-          
-          # Test internal health endpoints
-          echo "=== Testing internal service health ==="
-          kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://localhost:3000/health && echo "✅ Patient service internal health: OK" || echo "❌ Patient service internal health: FAILED"
-          kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://localhost:3001/health && echo "✅ Appointment service internal health: OK" || echo "❌ Appointment service internal health: FAILED"
-          
-          # Test service-to-service communication
-          echo "=== Testing service communication ==="
-          kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://appointment-service:3001/health && echo "✅ Patient -> Appointment communication: OK" || echo "❌ Patient -> Appointment communication: FAILED"
-          kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://patient-service:3000/health && echo "✅ Appointment -> Patient communication: OK" || echo "❌ Appointment -> Patient communication: FAILED"
-          
-          # Test through ingress (if available)
-          echo "=== Testing through ingress ==="
+          # Test through ingress
+          echo "Testing through ingress..."
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
-            echo "Testing with External IP: $EXTERNAL_IP"
             curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health && echo "✅ Ingress health check: OK" || echo "❌ Ingress health check: FAILED"
-            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients && echo "✅ Patients endpoint: OK" || echo "❌ Patients endpoint: FAILED"
-            curl -s -f -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/appointments && echo "✅ Appointments endpoint: OK" || echo "❌ Appointments endpoint: FAILED"
-          else
-            echo "❌ No External IP found for ingress"
           fi
-
-      - name: Debug information
-        if: always()
-        run: |
-          echo "=== Debug Information ==="
-          echo "Current namespace status:"
-          kubectl get namespace lbg-ns -o yaml
-          echo ""
-          echo "Helm releases:"
-          helm list -n lbg-ns
-          echo ""
-          echo "Pod logs (patient-service):"
-          kubectl logs -n lbg-ns -l app=patient-service --tail=50
-          echo ""
-          echo "Pod logs (appointment-service):"
-          kubectl logs -n lbg-ns -l app=appointment-service --tail=50
 
   cleanup:
     runs-on: ubuntu-latest

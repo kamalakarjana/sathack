@@ -10,9 +10,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
-    {{- range $key, $value := .Values.ingress.annotations }}
-    {{ $key }}: {{ $value | quote }}
-    {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   rules:
