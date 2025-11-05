@@ -13,7 +13,7 @@ env:
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   NODE_VERSION: '18'
-  TERRAFORM_VERSION: '1.5.0'
+  TERRAFORM_VERSION: '1.7.5'
   HELM_VERSION: '3.14.0'
 
 jobs:
@@ -50,10 +50,26 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
+      - name: Check Terraform State
+        run: |
+          cd infrastructure
+          terraform state list || echo "State might be empty or corrupted"
+          terraform refresh -lock=false
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
       - name: Import Existing Resource Group
         run: |
           cd infrastructure
-          terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Resource group may already be imported or doesn't exist"
+          if az group show --name kamalakar-demo-dev &>/dev/null; then
+            echo "Importing existing resource group..."
+            terraform import module.resource_group.azurerm_resource_group.main /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev || echo "Import failed or already exists"
+          else
+            echo "Resource group does not exist, skipping import"
+          fi
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -97,12 +113,29 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      - name: Terraform Apply
+      - name: Terraform Apply with Retry
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/qwert'
         run: |
           cd infrastructure
           echo "Applying Terraform plan on branch: ${{ github.ref }}"
-          terraform apply -auto-approve tfplan
+          
+          max_retries=2
+          count=0
+          until terraform apply -auto-approve tfplan; do
+            count=$((count + 1))
+            if [ $count -ge $max_retries ]; then
+              echo "Terraform apply failed after $max_retries attempts"
+              exit 1
+            fi
+            echo "Terraform apply failed, retrying in 10 seconds..."
+            sleep 10
+            terraform init -reconfigure \
+              -backend-config="resource_group_name=kamalakar-demo-dev" \
+              -backend-config="storage_account_name=${{ secrets.STORAGE_ACCOUNT_NAME }}" \
+              -backend-config="container_name=lbg-02-12-1994" \
+              -backend-config="key=terraform.lbg-02-12-1994"
+          done
+          
           echo "Terraform apply completed successfully"
         env:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -144,7 +177,6 @@ jobs:
         run: |
           cd ${{ matrix.service }}
           
-          # Build the image
           docker build \
             --tag ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:${{ github.sha }} \
             --tag ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:latest \
@@ -153,7 +185,6 @@ jobs:
             --build-arg VERSION=1.0.0 \
             .
           
-          # Push the image
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:${{ github.sha }}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.service }}:latest
           
@@ -254,17 +285,13 @@ jobs:
 
       - name: Handle existing namespace
         run: |
-          # Check if namespace exists
           if kubectl get namespace lbg-ns >/dev/null 2>&1; then
             echo "Namespace lbg-ns already exists"
-            
-            # Check if there's a Helm release in this namespace
             if helm list -n lbg-ns -q | grep -q "lbg-app"; then
               echo "Helm release 'lbg-app' exists, will perform upgrade"
             else
               echo "No Helm release found. Deleting namespace for clean installation..."
               kubectl delete namespace lbg-ns
-              echo "Waiting for namespace to be deleted..."
               if kubectl wait --for=delete namespace/lbg-ns --timeout=120s 2>/dev/null; then
                 echo "Namespace deleted successfully"
               else
@@ -278,10 +305,7 @@ jobs:
 
       - name: Create ACR pull secret
         run: |
-          # Ensure namespace exists
           kubectl create namespace lbg-ns --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Create or update ACR secret
           kubectl create secret docker-registry acr-secret \
             --namespace lbg-ns \
             --docker-server=${{ secrets.ACR_LOGIN_SERVER }} \
@@ -292,16 +316,12 @@ jobs:
       - name: Deploy to AKS using Helm
         run: |
           cd kubernetes/helm
-          
-          # Template test first
           helm template lbg-app . \
             --namespace lbg-ns \
             -f values-dev.yml \
             --set patientService.tag=${{ github.sha }} \
             --set appointmentService.tag=${{ github.sha }} \
             --set image.registry=${{ secrets.ACR_LOGIN_SERVER }}
-          
-          # Install/Upgrade the release
           helm upgrade --install lbg-app . \
             --namespace lbg-ns \
             --wait \
@@ -346,23 +366,15 @@ jobs:
       - name: Run comprehensive health checks
         run: |
           echo "=== Running Health Checks ==="
-          
-          # Wait for pods to be ready
           echo "Waiting for pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=patient-service -n lbg-ns --timeout=300s
           kubectl wait --for=condition=ready pod -l app=appointment-service -n lbg-ns --timeout=300s
-          
-          # Test internal health endpoints
           echo "Testing internal service health..."
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://localhost:3000/health && echo "✅ Patient service internal health: OK" || echo "❌ Patient service internal health: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://localhost:3001/health && echo "✅ Appointment service internal health: OK" || echo "❌ Appointment service internal health: FAILED"
-          
-          # Test service-to-service communication
           echo "Testing service communication..."
           kubectl exec -n lbg-ns deployment/patient-service -- curl -s -f http://appointment-service:3001/health && echo "✅ Patient -> Appointment communication: OK" || echo "❌ Patient -> Appointment communication: FAILED"
           kubectl exec -n lbg-ns deployment/appointment-service -- curl -s -f http://patient-service:3000/health && echo "✅ Appointment -> Patient communication: OK" || echo "❌ Appointment -> Patient communication: FAILED"
-          
-          # Test through ingress (if available)
           echo "Testing through ingress..."
           EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           if [ -n "$EXTERNAL_IP" ]; then
