@@ -38,7 +38,7 @@ jobs:
 
       - name: Check Available VM Sizes in East US
         run: |
-          echo "Checking available VM sizes in East US (DC-series only available):"
+          echo "Checking available VM sizes in East US:"
           az vm list-sizes --location "East US" --query "[?contains(name, 'dc2')] | [:5].{Name:name, CPUs:numberOfCores, Memory:memoryInMb}" --output table
 
       - name: Create Resource Group if not exists
@@ -77,6 +77,22 @@ jobs:
           else
             echo "Storage account already exists"
           fi
+
+      - name: Grant Required Permissions to Service Principal
+        run: |
+          # Get the service principal object ID
+          SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "Service Principal Object ID: $SP_OBJECT_ID"
+          
+          # Grant User Access Administrator role at subscription level for role assignments
+          az role assignment create \
+            --assignee $SP_OBJECT_ID \
+            --role "User Access Administrator" \
+            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            || echo "Role assignment may already exist or insufficient permissions"
+          
+          echo "Waiting for permissions to propagate..."
+          sleep 30
 
       - name: Terraform Init
         run: |
@@ -190,6 +206,20 @@ jobs:
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Manually Assign ACR Role if Needed
+        if: always()
+        run: |
+          # Get AKS cluster service principal
+          AKS_SP_ID=$(az aks show --resource-group kamalakar-demo-dev --name kamal-lgb-aks-cluster-dev --query identity.principalId -o tsv)
+          echo "AKS Service Principal ID: $AKS_SP_ID"
+          
+          # Assign AcrPull role to AKS cluster
+          az role assignment create \
+            --assignee $AKS_SP_ID \
+            --role AcrPull \
+            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/kamalakar-demo-dev/providers/Microsoft.ContainerRegistry/registries/acrkamaldemodev" \
+            || echo "ACR role assignment may already exist"
 
   build-and-push:
     runs-on: ubuntu-latest
