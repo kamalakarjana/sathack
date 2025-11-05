@@ -32,7 +32,7 @@ echo "4. Testing via ingress..."
 EXTERNAL_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 if [ -n "$EXTERNAL_IP" ]; then
   echo "External IP: $EXTERNAL_IP"
-  
+
   echo "Testing endpoints:"
   echo "- /health: $(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/health)"
   echo "- /patients: $(curl -s -o /dev/null -w "%{http_code}" -H "Host: lbg-app.dev.local" http://$EXTERNAL_IP/patients)"
